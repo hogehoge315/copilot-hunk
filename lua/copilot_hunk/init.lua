@@ -85,6 +85,90 @@ function M.end_session(bufnr)
   session.stop(bufnr)
 end
 
+--- Arm the plugin for a single AI edit on `bufnr`.
+--- Captures a snapshot NOW, then watches for the file to change on disk
+--- (FileChangedShell / BufReadPost) and auto-starts a session.
+--- The armed state expires after 120 seconds to avoid stale triggers.
+---
+--- Usage: call this BEFORE telling the AI to edit the file.
+---
+--- @param bufnr? number  defaults to current buffer
+function M.arm(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local base = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local fname = vim.api.nvim_buf_get_name(bufnr)
+
+  -- Discard any previous armed state for this buffer.
+  M._disarm(bufnr)
+
+  local aug_name = "CopilotHunkArmed_" .. bufnr
+  local aug = vim.api.nvim_create_augroup(aug_name, { clear = true })
+
+  local function fire()
+    M._disarm(bufnr)
+    vim.defer_fn(function()
+      if not vim.api.nvim_buf_is_valid(bufnr) then return end
+      if M.has_session(bufnr) then return end
+      local current = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      if not vim.deep_equal(base, current) then
+        require("copilot_hunk.session").start(bufnr, base, M._opts)
+      else
+        vim.notify("[copilot-hunk] 変更が検出されませんでした。", vim.log.levels.INFO)
+      end
+    end, 80)
+  end
+
+  -- Watch for external file change (AI rewrote the file on disk).
+  vim.api.nvim_create_autocmd({ "FileChangedShellPost", "BufReadPost" }, {
+    group = aug,
+    buffer = bufnr,
+    once = true,
+    callback = fire,
+  })
+
+  -- Expire after 120s to avoid stale triggers from later saves/formatters.
+  local timer = vim.uv.new_timer()
+  timer:start(120000, 0, vim.schedule_wrap(function()
+    M._disarm(bufnr)
+    vim.notify("[copilot-hunk] armed状態がタイムアウトしました。", vim.log.levels.WARN)
+  end))
+
+  -- Store armed state.
+  M._armed = M._armed or {}
+  M._armed[bufnr] = { base = base, aug = aug_name, timer = timer, fname = fname }
+
+  vim.notify(
+    string.format("[copilot-hunk] Armed: %s — AIが編集したら自動でセッション開始します", vim.fn.fnamemodify(fname, ":t")),
+    vim.log.levels.INFO
+  )
+end
+
+--- @private
+function M._disarm(bufnr)
+  if not M._armed or not M._armed[bufnr] then return end
+  local state = M._armed[bufnr]
+  pcall(vim.api.nvim_del_augroup_by_name, state.aug)
+  if state.timer and not state.timer:is_closing() then
+    state.timer:stop()
+    state.timer:close()
+  end
+  M._armed[bufnr] = nil
+end
+
+--- Manually start a session using the armed snapshot (for when the AI
+--- edited the buffer content directly rather than the file on disk).
+--- @param bufnr? number
+function M.trigger_armed_session(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  if not M._armed or not M._armed[bufnr] then
+    vim.notify("[copilot-hunk] このバッファはarmed状態ではありません。先に <leader>ab を押してください。", vim.log.levels.WARN)
+    return
+  end
+  local base = M._armed[bufnr].base
+  M._disarm(bufnr)
+  require("copilot_hunk.session").start(bufnr, base, M._opts)
+end
+
 --- Return true if there is an active session for `bufnr`.
 --- @param bufnr? number
 --- @return boolean
