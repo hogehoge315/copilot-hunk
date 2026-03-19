@@ -23,7 +23,7 @@ M._opts = {
   },
   signs   = false,
   keymaps = true,
-  enable_auto_snapshot = false,
+  enable_auto_snapshot = true,
 }
 
 --- Configure the plugin.  Call once in your init.lua / lazy spec.
@@ -181,12 +181,28 @@ end
 --- @private
 --- Set up autocmds that automatically capture a base snapshot when an external
 --- tool edits the file on disk, covering both autoread and non-autoread setups.
+---
+--- Formatter guard: formatters rewrite the file immediately after Neovim saves,
+--- so FileChangedShell fires within seconds of BufWritePre.  We track the last
+--- Neovim-initiated write timestamp per buffer and skip any FileChangedShell
+--- that arrives within 5 seconds — those are formatter rewrites, not AI edits.
 function M._setup_auto_snapshot()
-  local snap_store = {} -- bufnr → string[] (pre-change lines)
+  local snap_store = {}      -- bufnr → string[] (pre-change snapshot)
+  local last_nvim_write = {} -- bufnr → timestamp ms (from BufWritePre)
 
   local aug = vim.api.nvim_create_augroup("CopilotHunkAutoSnap", { clear = true })
 
-  -- Save snapshot of current buffer on focus (covers autoread case)
+  -- Track every time Neovim itself writes a buffer to disk.
+  -- Any FileChangedShell that fires within 5s of this is a formatter, not an AI.
+  vim.api.nvim_create_autocmd("BufWritePre", {
+    group = aug,
+    callback = function(args)
+      last_nvim_write[args.buf] = vim.uv.now()
+    end,
+  })
+
+  -- Save snapshot on FocusGained (covers the "user was away while AI edited" case).
+  -- When user returns, autoread reloads the file, then BufReadPost fires.
   vim.api.nvim_create_autocmd("FocusGained", {
     group = aug,
     callback = function()
@@ -198,19 +214,24 @@ function M._setup_auto_snapshot()
     end,
   })
 
-  -- Also save on FileChangedShell (non-autoread setups)
+  -- FileChangedShell: file changed on disk while Neovim has focus.
+  -- Save snapshot IF it's not a formatter (i.e., not a recent Neovim write).
   vim.api.nvim_create_autocmd("FileChangedShell", {
     group = aug,
     callback = function(args)
       local bufnr = args.buf
       if M.has_session(bufnr) then return end
+      -- Skip if this change follows a recent Neovim save (formatter guard).
+      local last_write = last_nvim_write[bufnr]
+      if last_write and (vim.uv.now() - last_write) < 5000 then return end
+      -- Save the current (pre-reload) buffer content as base.
       if not snap_store[bufnr] then
         snap_store[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
       end
     end,
   })
 
-  -- After reload: compare and start session if content changed
+  -- After the file has been reloaded, compare and start session if changed.
   vim.api.nvim_create_autocmd({ "FileChangedShellPost", "BufReadPost" }, {
     group = aug,
     callback = function(args)
