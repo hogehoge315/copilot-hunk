@@ -45,3 +45,11 @@ end, { desc = "Reject all hunks" })
 vim.api.nvim_create_user_command("CopilotHunkEnd", function()
   require("copilot_hunk").end_session(buf())
 end, { desc = "End the current review session" })
+
+vim.api.nvim_create_user_command("CopilotHunkAcceptAllFiles", function()
+  require("copilot_hunk.session").accept_all_global()
+end, { desc = "Accept all hunks in all active sessions" })
+
+vim.api.nvim_create_user_command("CopilotHunkRejectAllFiles", function()
+  require("copilot_hunk.session").reject_all_global()
+end, { desc = "Reject all hunks in all active sessions" })
