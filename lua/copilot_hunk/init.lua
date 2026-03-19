@@ -1,16 +1,18 @@
 --- init.lua
 --- Public API for copilot-hunk.
 ---
---- Typical usage (called by an external AI tool such as Copilot CLI):
+--- This plugin automatically detects when an AI tool (Copilot, aider, cline, etc.)
+--- edits a file on disk and starts a review session automatically.
 ---
----   -- Before the AI edits the buffer:
----   local base = require("copilot_hunk").snapshot(bufnr)
+--- Setup (in your Neovim config):
+---   require('copilot_hunk').setup({ enable_auto_snapshot = true })
 ---
----   -- After the AI has written new content to the buffer:
----   require("copilot_hunk").start_session(bufnr, base)
+--- The session starts automatically when the file changes on disk.
+--- Use n/N to navigate hunks, ga/gr to accept/reject.
+--- The session ends automatically when all hunks are resolved.
 ---
----   -- Optionally end manually (auto-ends when all hunks are reviewed):
----   require("copilot_hunk").end_session(bufnr)
+--- Manual fallback (if auto-detection doesn't trigger):
+---   require("copilot_hunk").start_session(bufnr, base_lines)
 
 local M = {}
 
