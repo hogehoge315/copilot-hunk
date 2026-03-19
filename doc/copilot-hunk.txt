@@ -1,0 +1,149 @@
+*copilot-hunk.txt*   VSCode-style inline hunk review for Neovim
+
+Author:   copilot-hunk contributors
+License:  MIT
+Version:  0.1.0
+
+==============================================================================
+CONTENTS                                              *copilot-hunk-contents*
+
+  1. Introduction .............. |copilot-hunk-intro|
+  2. Requirements .............. |copilot-hunk-requirements|
+  3. Installation .............. |copilot-hunk-installation|
+  4. Setup ..................... |copilot-hunk-setup|
+  5. Keymaps ................... |copilot-hunk-keymaps|
+  6. Commands .................. |copilot-hunk-commands|
+  7. API ....................... |copilot-hunk-api|
+  8. Highlights ................ |copilot-hunk-highlights|
+
+==============================================================================
+1. INTRODUCTION                                          *copilot-hunk-intro*
+
+copilot-hunk provides a VSCode-Copilot-like inline diff review workflow for
+Neovim. After an AI tool edits a buffer, copilot-hunk displays the changes
+with full-line colour highlights and lets you accept or reject each hunk.
+
+Design model:
+  - AI changes are applied to the buffer immediately.
+  - A snapshot of the pre-AI state is stored as the `base`.
+  - Accepting a hunk keeps the AI change (no-op).
+  - Rejecting a hunk replaces the buffer lines with the base content.
+
+==============================================================================
+2. REQUIREMENTS                                   *copilot-hunk-requirements*
+
+  - Neovim >= 0.11
+
+==============================================================================
+3. INSTALLATION                                   *copilot-hunk-installation*
+
+Using lazy.nvim: >lua
+  {
+    "younaka315/copilot-hunk",
+    version = "*",
+    opts = {},
+  }
+<
+Using packer.nvim: >lua
+  use {
+    "younaka315/copilot-hunk",
+    config = function()
+      require("copilot_hunk").setup()
+    end,
+  }
+<
+==============================================================================
+4. SETUP                                                 *copilot-hunk-setup*
+
+Call `require("copilot_hunk").setup(opts)` with the following options:
+
+  highlights.add    (table)    nvim_set_hl attrs for added lines.
+                               Default: { bg = "#1e3a2f" }
+
+  highlights.delete (table)    nvim_set_hl attrs for deleted lines.
+                               Default: { bg = "#3a1e1e" }
+
+  highlights.change (table)    nvim_set_hl attrs for changed lines.
+                               Default: { bg = "#2e2a12" }
+
+  signs             (boolean)  Show ▎ sign-column markers. Default: true
+
+  keymaps           (boolean)  Install default buffer-local keymaps.
+                               Default: true
+
+==============================================================================
+5. KEYMAPS                                             *copilot-hunk-keymaps*
+
+Active only during a review session (buffer-local, normal mode):
+
+  ga   Accept hunk at cursor             |CopilotHunkAccept|
+  gr   Reject hunk at cursor             |CopilotHunkReject|
+  gn   Jump to next hunk                 |CopilotHunkNext|
+  gp   Jump to previous hunk             |CopilotHunkPrev|
+  gA   Accept all hunks                  |CopilotHunkAcceptAll|
+  gR   Reject all hunks                  |CopilotHunkRejectAll|
+
+==============================================================================
+6. COMMANDS                                           *copilot-hunk-commands*
+
+:CopilotHunkAccept                                       *CopilotHunkAccept*
+    Accept the hunk at the cursor position.
+
+:CopilotHunkReject                                       *CopilotHunkReject*
+    Reject the hunk at the cursor position (restores base content).
+
+:CopilotHunkNext                                           *CopilotHunkNext*
+    Move the cursor to the start of the next pending hunk.
+
+:CopilotHunkPrev                                           *CopilotHunkPrev*
+    Move the cursor to the start of the previous pending hunk.
+
+:CopilotHunkAcceptAll                                 *CopilotHunkAcceptAll*
+    Accept all pending hunks.
+
+:CopilotHunkRejectAll                                 *CopilotHunkRejectAll*
+    Reject all pending hunks.
+
+:CopilotHunkEnd                                           *CopilotHunkEnd*
+    End the current review session, discarding any pending hunk state.
+
+==============================================================================
+7. API                                                     *copilot-hunk-api*
+
+require("copilot_hunk").setup({opts})               *copilot_hunk.setup()*
+    Configure the plugin. See |copilot-hunk-setup|.
+
+require("copilot_hunk").snapshot([bufnr])        *copilot_hunk.snapshot()*
+    Return the current lines of `bufnr` as a string[].
+    Call this BEFORE triggering the AI edit to capture the base snapshot.
+    `bufnr` defaults to the current buffer.
+
+require("copilot_hunk").start_session(bufnr, base_lines)
+                                              *copilot_hunk.start_session()*
+    Start a review session. `base_lines` is the snapshot taken before the
+    AI edit. The buffer must already contain the AI-edited content.
+    Returns true on success, false if a session is already active or there
+    are no differences.
+
+require("copilot_hunk").end_session([bufnr])    *copilot_hunk.end_session()*
+    End the active review session for `bufnr`. Clears highlights and
+    removes buffer-local keymaps. `bufnr` defaults to current buffer.
+
+require("copilot_hunk").has_session([bufnr])    *copilot_hunk.has_session()*
+    Return true if there is an active session for `bufnr`.
+
+==============================================================================
+8. HIGHLIGHTS                                       *copilot-hunk-highlights*
+
+The following highlight groups are defined by the plugin. Override them in
+your colorscheme or after `setup()` with `vim.api.nvim_set_hl()`.
+
+  CopilotHunkAdd         Background for added lines.
+  CopilotHunkDelete      Background for deleted virtual lines.
+  CopilotHunkChange      Background for changed lines.
+  CopilotHunkAddSign     Foreground for the add sign-column marker.
+  CopilotHunkDeleteSign  Foreground for the delete sign-column marker.
+  CopilotHunkChangeSign  Foreground for the change sign-column marker.
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:
