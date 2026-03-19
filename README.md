@@ -2,7 +2,10 @@
 
 > VSCode-style inline diff review for AI-assisted editing in Neovim.
 
-`copilot-hunk` lets you review AI-generated code changes **hunk by hunk** directly in your buffer — with full-line colour highlights exactly like the GitHub Copilot experience in VSCode.
+`copilot-hunk` automatically detects when an AI tool (Copilot CLI, aider, cline, etc.)
+edits a file on disk and shows the diff **inline** with full-line colour highlights —
+just like the GitHub Copilot experience in VS Code.
+No manual setup needed: the review session starts and ends automatically.
 
 ![demo placeholder](https://raw.githubusercontent.com/hogehoge315/copilot-hunk/main/assets/demo.gif)
 
@@ -10,14 +13,22 @@
 
 ## Features
 
-- **Inline diff highlighting** — entire lines are coloured (not just gutter signs)
-  - 🟢 Added lines: green background
-  - 🔴 Deleted lines: red virtual lines shown inline
-  - 🟡 Changed lines: yellow background + red virtual lines for the original
-- **Hunk-level Accept / Reject** — accept the AI change or roll back to the pre-AI state
-- **Session model** — mirrors VS Code Copilot's UX (apply first, reject to roll back)
-- **Git-independent** — works on unsaved buffers, no Git repo required
-- **Neovim ≥ 0.11** — uses `vim.diff()`, `virt_lines`, and `line_hl_group` extmarks
+- **Auto-detection of AI edits** — no manual snapshot step.
+  When an external tool writes a file, `FileChangedShell` / `FocusGained` fires and
+  a review session starts automatically.
+- **Formatter false-positive prevention** — `BufWritePre` timestamp guard ignores
+  file changes within 2 seconds of a Neovim save (stylua, prettier, LSP format, etc.).
+- **Inline diff with 2-tier colouring** — muted background on the entire changed line,
+  vivid overlay on the changed text region (like GitHub's diff view).
+- **Character-level diff** — within change hunks, the exact modified characters are
+  highlighted with an even stronger colour (`CopilotHunkChangeChar`).
+- **Hunk counter** — each pending hunk shows `[1/3]` virtual text at end-of-line.
+- **`n` / `N` navigation with wrap-around** — jump between hunks just like search.
+- **Cross-file navigation** — `n` / `N` crosses buffer boundaries when multiple files
+  have active sessions, cycling through all pending hunks.
+- **Accept / reject at three levels** — hunk (`ga` / `gr`), file (`gA` / `gR`),
+  or all files (`gAA` / `gRR`).
+- **Git-independent** — works on any buffer, no Git repo required.
 
 ---
 
@@ -29,7 +40,10 @@
 {
   "hogehoge315/copilot-hunk",
   version = "*",
-  opts = {},  -- see Configuration below
+  opts = {
+    enable_auto_snapshot = true,  -- default: true
+    signs = false,                -- default: false
+  },
 }
 ```
 
@@ -50,13 +64,14 @@ use {
 
 ```lua
 require("copilot_hunk").setup({
+  enable_auto_snapshot = true,   -- auto-detect AI file edits
+  signs   = false,               -- sign column markers (default: false)
+  keymaps = true,                -- install default keymaps
   highlights = {
-    add    = { bg = "#1e3a2f" },  -- override added-line background
-    delete = { bg = "#3a1e1e" },  -- override deleted-line background
-    change = { bg = "#2e2a12" },  -- override changed-line background
+    add    = {},   -- override CopilotHunkAdd bg
+    delete = {},   -- override CopilotHunkDelete bg
+    change = {},   -- override CopilotHunkChange bg
   },
-  signs   = true,   -- show ▎ marker in the sign column
-  keymaps = true,   -- install default keymaps (see below)
 })
 ```
 
@@ -65,15 +80,18 @@ require("copilot_hunk").setup({
 ## Keymaps
 
 The following keymaps are buffer-local and active **only during a review session**.
+When the session ends, `n` / `N` revert to Neovim's default behaviour.
 
 | Key | Action |
 |-----|--------|
-| `ga` | Accept hunk at cursor |
-| `gr` | Reject hunk at cursor |
-| `gn` | Jump to next hunk |
-| `gp` | Jump to previous hunk |
-| `gA` | Accept all hunks |
-| `gR` | Reject all hunks |
+| `n` | Go to next hunk (cross-file, wrap-around) |
+| `N` | Go to previous hunk (cross-file, wrap-around) |
+| `ga` | Accept hunk at cursor → auto-jump to next |
+| `gr` | Reject hunk at cursor → auto-jump to next |
+| `gA` | Accept all hunks in current file |
+| `gR` | Reject all hunks in current file |
+| `gAA` | Accept all hunks across all files |
+| `gRR` | Reject all hunks across all files |
 
 To disable the default keymaps and define your own:
 
@@ -96,49 +114,46 @@ end)
 | `:CopilotHunkReject` | Reject hunk at cursor |
 | `:CopilotHunkNext` | Go to next hunk |
 | `:CopilotHunkPrev` | Go to previous hunk |
-| `:CopilotHunkAcceptAll` | Accept all hunks |
-| `:CopilotHunkRejectAll` | Reject all hunks |
+| `:CopilotHunkAcceptAll` | Accept all hunks in current buffer |
+| `:CopilotHunkRejectAll` | Reject all hunks in current buffer |
+| `:CopilotHunkAcceptAllFiles` | Accept all hunks across all active sessions |
+| `:CopilotHunkRejectAllFiles` | Reject all hunks across all active sessions |
 | `:CopilotHunkEnd` | End the current session |
-
----
-
-## Programmatic API
-
-Designed to be called by external AI tools (e.g. Copilot CLI, custom scripts):
-
-```lua
-local ch = require("copilot_hunk")
-
--- 1. Capture the buffer state BEFORE the AI edits it.
-local base = ch.snapshot(bufnr)
-
--- 2. (AI tool writes new content to the buffer here.)
-
--- 3. Start the review session.
-ch.start_session(bufnr, base)
-
--- 4. User reviews hunks with ga/gr/gn/gp…
---    Session ends automatically when all hunks are resolved.
-
--- 5. Or end the session manually at any time:
-ch.end_session(bufnr)
-```
 
 ---
 
 ## How It Works
 
-Based on [ADR-0002](./adr.md):
-
 ```
-base snapshot ←─ saved before AI edit
-      │
-      ↓ vim.diff()
-ai_result (= current buffer) ←─ AI writes here
-      │
-      ↓ review
-Accept → keep ai_result lines  (no-op)
-Reject → restore base lines    (buffer replace)
+AI tool writes file on disk
+       ↓
+FileChangedShell / FocusGained fires
+       ↓ (formatter guard: skip if Neovim saved < 2s ago)
+Snapshot comparison
+       ↓ (diff detected)
+Session starts — inline highlights appear
+       ↓
+User navigates with n/N, accepts/rejects with ga/gr
+       ↓ (all hunks resolved)
+Session ends automatically
+```
+
+---
+
+## Programmatic API
+
+For AI tools or scripts that want to integrate directly:
+
+```lua
+local ch = require("copilot_hunk")
+
+-- Manually start a session (when auto-detection doesn't apply):
+local base = ch.snapshot(bufnr)  -- capture before AI edits
+-- ... AI writes to buffer ...
+ch.start_session(bufnr, base)
+
+-- End manually (optional; auto-ends when all hunks resolved):
+ch.end_session(bufnr)
 ```
 
 ---
@@ -152,3 +167,7 @@ Reject → restore base lines    (buffer replace)
 ## License
 
 MIT — see [LICENSE](./LICENSE)
+
+---
+
+For full specification, see [SPEC.md](./SPEC.md).
