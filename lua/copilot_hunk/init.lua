@@ -223,7 +223,7 @@ function M._setup_auto_snapshot()
       if M.has_session(bufnr) then return end
       -- Skip if this change follows a recent Neovim save (formatter guard).
       local last_write = last_nvim_write[bufnr]
-      if last_write and (vim.uv.now() - last_write) < 5000 then return end
+      if last_write and (vim.uv.now() - last_write) < 2000 then return end
       -- Save the current (pre-reload) buffer content as base.
       if not snap_store[bufnr] then
         snap_store[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
