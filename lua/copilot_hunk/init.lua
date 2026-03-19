@@ -43,13 +43,6 @@ function M.setup(user_opts)
   vim.api.nvim_create_autocmd("ColorScheme", {
     group = vim.api.nvim_create_augroup("CopilotHunkHL", { clear = true }),
     callback = function()
-      -- Reset so define_highlights re-creates them with correct contrast.
-      for _, name in ipairs({
-        "CopilotHunkAdd", "CopilotHunkDelete", "CopilotHunkChange",
-        "CopilotHunkAddSign", "CopilotHunkDeleteSign", "CopilotHunkChangeSign",
-      }) do
-        vim.api.nvim_set_hl(0, name, {})
-      end
       ui.define_highlights(M._opts.highlights)
     end,
   })

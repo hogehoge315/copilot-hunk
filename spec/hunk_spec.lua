@@ -1,29 +1,55 @@
 --- spec/hunk_spec.lua
 --- Unit tests for hunk operations (accept, reject, navigation).
---- These tests do NOT require Neovim because they mock nvim_buf_set_lines.
+--- Works both inside Neovim (headless) and outside (standalone busted)
+--- by providing a minimal vim API stub when vim is not available.
 
--- Minimal vim API stub.
+-- Minimal vim API stub for running outside Neovim.
 if not vim then
-  local _lines = {}
+  local _buffers = { [0] = {} }
+  local _next_buf = 1
 
   ---@diagnostic disable-next-line: lowercase-global
   vim = {
     api = {
-      nvim_buf_set_lines = function(bufnr, s, e, strict, replacement)
-        -- Simulate 0-indexed, end-exclusive replacement on _lines.
+      nvim_create_buf = function(_listed, _scratch)
+        local id = _next_buf
+        _next_buf = _next_buf + 1
+        _buffers[id] = {}
+        return id
+      end,
+      nvim_buf_set_lines = function(bufnr, s, e, _strict, replacement)
+        local lines = _buffers[bufnr] or {}
+        local actual_e = e < 0 and #lines or e
         local result = {}
-        for i = 1, s do result[#result + 1] = _lines[i] end
+        for i = 1, s do result[#result + 1] = lines[i] end
         for _, l in ipairs(replacement) do result[#result + 1] = l end
-        for i = e + 1, #_lines do result[#result + 1] = _lines[i] end
-        _lines = result
+        for i = actual_e + 1, #lines do result[#result + 1] = lines[i] end
+        _buffers[bufnr] = result
+      end,
+      nvim_buf_get_lines = function(bufnr, s, e, _strict)
+        local lines = _buffers[bufnr] or {}
+        local actual_e = e < 0 and #lines or e
+        local result = {}
+        for i = s + 1, actual_e do result[#result + 1] = lines[i] end
+        return result
       end,
     },
-    _test_set_lines = function(lines) _lines = lines end,
-    _test_get_lines = function() return _lines end,
   }
 end
 
 local hunk_mod = require("copilot_hunk.hunk")
+
+--- Create a scratch buffer populated with the given lines.
+local function create_test_buf(lines)
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  return bufnr
+end
+
+--- Read all lines from a test buffer.
+local function get_buf_lines(bufnr)
+  return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+end
 
 --- Helper: create a minimal hunk.
 local function make_hunk(id, type, start_a, end_a, start_b, end_b, before, after)
@@ -50,29 +76,39 @@ end)
 
 describe("hunk_mod.reject()", function()
   it("sets status to 'rejected'", function()
-    vim._test_set_lines({ "new" })
+    local bufnr = create_test_buf({ "new" })
     local h = make_hunk(1, "change", 1, 1, 1, 1, { "old" }, { "new" })
-    hunk_mod.reject(h, 0, { h })
+    hunk_mod.reject(h, bufnr, { h })
     assert.are.equal("rejected", h.status)
   end)
 
-  it("restores before_lines in the buffer", function()
-    vim._test_set_lines({ "new" })
+  it("restores before_lines in the buffer for a change hunk", function()
+    local bufnr = create_test_buf({ "new" })
     local h = make_hunk(1, "change", 1, 1, 1, 1, { "original" }, { "new" })
-    hunk_mod.reject(h, 0, { h })
-    assert.are.equal("original", vim._test_get_lines()[1])
+    hunk_mod.reject(h, bufnr, { h })
+    assert.are.equal("original", get_buf_lines(bufnr)[1])
+  end)
+
+  it("re-inserts before_lines for a delete hunk", function()
+    -- After deletion, buffer has lines { "a", "c" }; line "b" was deleted
+    -- after line 1. start_after=1 means deleted after line 1 of the after-text.
+    local bufnr = create_test_buf({ "a", "c" })
+    local h = make_hunk(1, "delete", 2, 2, 1, 0, { "b" }, {})
+    hunk_mod.reject(h, bufnr, { h })
+    local lines = get_buf_lines(bufnr)
+    assert.are.same({ "a", "b", "c" }, lines)
   end)
 
   it("shifts later pending hunks by the correct offset", function()
     -- base: 3 lines, ai_result: 4 lines (one extra added in hunk1)
     -- hunk1: add 1 line at position 2  (before=0, after=1 → delta = -1 on reject)
     -- hunk2: change at position 3 (after) → should shift to 2 after hunk1 reject
-    vim._test_set_lines({ "a", "ADDED", "b", "CHANGED" })
+    local bufnr = create_test_buf({ "a", "ADDED", "b", "CHANGED" })
 
     local h1 = make_hunk(1, "add",    0, 0,   2, 2, {},        { "ADDED" })
     local h2 = make_hunk(2, "change", 3, 3,   4, 4, { "b" },   { "CHANGED" })
 
-    hunk_mod.reject(h1, 0, { h1, h2 })
+    hunk_mod.reject(h1, bufnr, { h1, h2 })
 
     -- After rejecting h1 (which added 1 line), h2 should shift back by 1.
     assert.are.equal(3, h2.start_after)

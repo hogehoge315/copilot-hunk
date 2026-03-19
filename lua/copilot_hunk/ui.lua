@@ -37,10 +37,9 @@ function M.define_highlights(opts)
 
   for name, def in pairs(defaults) do
     local override = overrides[name] or {}
-    -- Only set when not already defined by colorscheme / user config.
-    if vim.fn.hlID(name) == 0 then
-      vim.api.nvim_set_hl(0, name, vim.tbl_extend("force", def, override))
-    end
+    -- `default = true` means the colorscheme can override these; we always
+    -- (re-)register them so they survive `:colorscheme` changes.
+    vim.api.nvim_set_hl(0, name, vim.tbl_extend("force", def, override, { default = true }))
   end
 end
 
@@ -85,19 +84,24 @@ function M._render_hunk(bufnr, ns, hunk, show_signs)
     end
 
   elseif hunk.type == "delete" then
-    -- Show deleted lines as virtual lines above the current position.
-    -- start_after is the line *before which* these lines were removed.
-    local anchor_row = math.max(hunk.start_after - 1, 0)  -- 0-indexed
+    -- Show deleted lines as virtual lines at the deletion point.
+    -- start_after is the 1-indexed line AFTER WHICH these lines were removed.
+    -- anchor_row (0-indexed) = start_after → the row just after the deletion point.
     local virt = M._build_virt_lines(hunk.before_lines, "CopilotHunkDelete")
-    if anchor_row < line_count then
-      vim.api.nvim_buf_set_extmark(bufnr, ns, anchor_row, 0, {
-        virt_lines = virt,
-        virt_lines_above = true,
-        sign_text = show_signs and "▎" or nil,
-        sign_hl_group = show_signs and "CopilotHunkDeleteSign" or nil,
-        priority = 100,
-      })
+    local anchor_row = hunk.start_after  -- 0-indexed row after deletion point
+    local above = true
+    if anchor_row >= line_count then
+      -- Deletion at end of file: attach below the last line.
+      anchor_row = line_count - 1
+      above = false
     end
+    vim.api.nvim_buf_set_extmark(bufnr, ns, anchor_row, 0, {
+      virt_lines = virt,
+      virt_lines_above = above,
+      sign_text = show_signs and "▎" or nil,
+      sign_hl_group = show_signs and "CopilotHunkDeleteSign" or nil,
+      priority = 100,
+    })
 
   elseif hunk.type == "change" then
     -- Show original lines as virtual lines above the first changed line.

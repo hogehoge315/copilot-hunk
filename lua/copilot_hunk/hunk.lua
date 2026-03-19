@@ -19,17 +19,17 @@ end
 function M.reject(hunk, bufnr, all_hunks)
   -- nvim_buf_set_lines is 0-indexed, end is exclusive.
   -- hunk.start_after / end_after are 1-indexed, inclusive.
-  local s = hunk.start_after - 1
-  local e = hunk.end_after   -- end_after inclusive → exclusive in 0-index
-
-  -- For a pure-add hunk the "after" range is the new lines that were inserted.
-  -- For a pure-delete hunk end_after < start_after (empty range); we still
-  -- need to insert the before_lines at that position.
   if hunk.type == "add" then
-    -- remove the added lines
-    vim.api.nvim_buf_set_lines(bufnr, s, e, false, {})
+    -- Remove the added lines: [start_after-1, end_after) in 0-indexed.
+    vim.api.nvim_buf_set_lines(bufnr, hunk.start_after - 1, hunk.end_after, false, {})
+  elseif hunk.type == "delete" then
+    -- Re-insert before_lines AFTER line start_after (1-indexed).
+    -- 0-indexed insert point = start_after.
+    local ins = hunk.start_after
+    vim.api.nvim_buf_set_lines(bufnr, ins, ins, false, hunk.before_lines)
   else
-    vim.api.nvim_buf_set_lines(bufnr, s, e, false, hunk.before_lines)
+    -- Change: replace the after range with the before lines.
+    vim.api.nvim_buf_set_lines(bufnr, hunk.start_after - 1, hunk.end_after, false, hunk.before_lines)
   end
 
   hunk.status = "rejected"
