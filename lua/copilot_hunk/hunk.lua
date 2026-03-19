@@ -93,4 +93,37 @@ function M.prev_hunk(line, hunks)
   return result
 end
 
+--- Return the next pending hunk with wrap-around.
+--- @param line number
+--- @param hunks Hunk[]
+--- @return Hunk|nil, boolean  (hunk, wrapped)
+function M.next_hunk_wrap(line, hunks)
+  local h = M.next_hunk(line, hunks)
+  if h then return h, false end
+  -- Wrap: return the first pending hunk (even if before current line).
+  for _, hunk in ipairs(hunks) do
+    if hunk.status == "pending" then
+      return hunk, true
+    end
+  end
+  return nil, false
+end
+
+--- Return the previous pending hunk with wrap-around.
+--- @param line number
+--- @param hunks Hunk[]
+--- @return Hunk|nil, boolean  (hunk, wrapped)
+function M.prev_hunk_wrap(line, hunks)
+  local h = M.prev_hunk(line, hunks)
+  if h then return h, false end
+  -- Wrap: return the last pending hunk.
+  local last = nil
+  for _, hunk in ipairs(hunks) do
+    if hunk.status == "pending" then
+      last = hunk
+    end
+  end
+  return last, last ~= nil
+end
+
 return M

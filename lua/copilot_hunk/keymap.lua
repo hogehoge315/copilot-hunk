@@ -8,12 +8,14 @@ local M = {}
 M._active = {}
 
 local MAPS = {
-  { "n", "ga", "accept_at_cursor", "Accept hunk at cursor" },
-  { "n", "gr", "reject_at_cursor", "Reject hunk at cursor" },
-  { "n", "gn", "goto_next",        "Go to next hunk" },
-  { "n", "gp", "goto_prev",        "Go to previous hunk" },
-  { "n", "gA", "accept_all",       "Accept all hunks" },
-  { "n", "gR", "reject_all",       "Reject all hunks" },
+  { "n", "ga",  "accept_at_cursor",   "Accept hunk at cursor" },
+  { "n", "gr",  "reject_at_cursor",   "Reject hunk at cursor" },
+  { "n", "n",   "goto_next",          "Go to next hunk" },
+  { "n", "N",   "goto_prev",          "Go to previous hunk" },
+  { "n", "gA",  "accept_all",         "Accept all hunks" },
+  { "n", "gR",  "reject_all",         "Reject all hunks" },
+  { "n", "gAA", "accept_all_global",  "Accept all hunks in all files" },
+  { "n", "gRR", "reject_all_global",  "Reject all hunks in all files" },
 }
 
 --- Attach buffer-local keymaps for `bufnr`.
