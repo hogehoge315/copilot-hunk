@@ -11,6 +11,7 @@ jobs:
     name: Run tests (Neovim ${{ matrix.neovim }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         neovim: [stable, nightly]
 
@@ -26,7 +27,7 @@ jobs:
       - name: Install LuaRocks + busted
         run: |
           sudo apt-get install -y luarocks
-          luarocks install busted
+          sudo luarocks install busted
 
       - name: Run tests
         run: nvim --headless -l spec/minit.lua
@@ -41,7 +42,7 @@ jobs:
       - name: Install luacheck
         run: |
           sudo apt-get install -y luarocks
-          luarocks install luacheck
+          sudo luarocks install luacheck
 
       - name: Run luacheck
-        run: luacheck lua/ plugin/ --globals vim --no-max-line-length
+        run: luacheck lua/ plugin/ spec/
