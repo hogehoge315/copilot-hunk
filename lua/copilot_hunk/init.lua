@@ -23,6 +23,7 @@ M._opts = {
   },
   signs   = false,
   keymaps = true,
+  enable_auto_snapshot = false,
 }
 
 --- Configure the plugin.  Call once in your init.lua / lazy spec.
@@ -46,6 +47,10 @@ function M.setup(user_opts)
       ui.define_highlights(M._opts.highlights)
     end,
   })
+
+  if M._opts.enable_auto_snapshot then
+    M._setup_auto_snapshot()
+  end
 end
 
 --- Capture the current content of `bufnr` as a snapshot string array.
@@ -87,6 +92,59 @@ function M.has_session(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local session = require("copilot_hunk.session")
   return session.get(bufnr) ~= nil
+end
+
+--- @private
+--- Set up autocmds that automatically capture a base snapshot when an external
+--- tool edits the file on disk, covering both autoread and non-autoread setups.
+function M._setup_auto_snapshot()
+  local snap_store = {} -- bufnr → string[] (pre-change lines)
+
+  local aug = vim.api.nvim_create_augroup("CopilotHunkAutoSnap", { clear = true })
+
+  -- Save snapshot of current buffer on focus (covers autoread case)
+  vim.api.nvim_create_autocmd("FocusGained", {
+    group = aug,
+    callback = function()
+      local bufnr = vim.api.nvim_get_current_buf()
+      if M.has_session(bufnr) then return end
+      if vim.bo[bufnr].buftype ~= "" then return end
+      if not vim.api.nvim_buf_is_loaded(bufnr) then return end
+      snap_store[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    end,
+  })
+
+  -- Also save on FileChangedShell (non-autoread setups)
+  vim.api.nvim_create_autocmd("FileChangedShell", {
+    group = aug,
+    callback = function(args)
+      local bufnr = args.buf
+      if M.has_session(bufnr) then return end
+      if not snap_store[bufnr] then
+        snap_store[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      end
+    end,
+  })
+
+  -- After reload: compare and start session if content changed
+  vim.api.nvim_create_autocmd({ "FileChangedShellPost", "BufReadPost" }, {
+    group = aug,
+    callback = function(args)
+      local bufnr = args.buf
+      local base = snap_store[bufnr]
+      if not base then return end
+      snap_store[bufnr] = nil
+
+      vim.defer_fn(function()
+        if not vim.api.nvim_buf_is_valid(bufnr) then return end
+        if M.has_session(bufnr) then return end
+        local current = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+        if not vim.deep_equal(base, current) then
+          require("copilot_hunk.session").start(bufnr, base, M._opts)
+        end
+      end, 50)
+    end,
+  })
 end
 
 return M
