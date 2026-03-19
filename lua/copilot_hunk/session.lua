@@ -330,7 +330,9 @@ end
 
 --- Accept all pending hunks in ALL active sessions across all files.
 function M.accept_all_global()
-  for _, bufnr in ipairs(M._session_order) do
+  -- Snapshot the order list: accept_all → _check_complete → stop removes from _session_order.
+  local order = vim.deepcopy(M._session_order)
+  for _, bufnr in ipairs(order) do
     M.accept_all(bufnr)
   end
 end
