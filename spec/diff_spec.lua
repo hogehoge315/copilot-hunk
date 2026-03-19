@@ -6,7 +6,7 @@
 if not vim then
   ---@diagnostic disable-next-line: lowercase-global
   vim = {
-    diff = function(a, b, opts)
+    diff = function(_a, _b, _opts)
       -- Simple stub: delegate to a native diff if available, otherwise skip.
       -- In a real CI run this test suite is executed *inside* Neovim with
       -- `nvim --headless -l spec/minit.lua`.

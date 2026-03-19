@@ -189,7 +189,7 @@ function M._render_char_diff(bufnr, ns, hunk)
     if not ok or not indices then return end
 
     for _, idx in ipairs(indices) do
-      local _sb, _cb, start_a, count_a = idx[1], idx[2], idx[3], idx[4]
+      local start_a, count_a = idx[3], idx[4]
       if count_a > 0 then
         local col_start = start_a - 1  -- 0-indexed
         local col_end   = col_start + count_a
