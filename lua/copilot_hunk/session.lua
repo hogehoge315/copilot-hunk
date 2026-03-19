@@ -117,12 +117,6 @@ function M.accept_at_cursor(bufnr)
   hunk_mod.accept(hunk)
   ui.render(bufnr, session.hunks, session.opts)
 
-  -- Auto-jump to next pending hunk (VSCode Copilot behaviour).
-  local next = hunk_mod.next_hunk(line, session.hunks)
-  if next then
-    vim.api.nvim_win_set_cursor(0, { next.start_after, 0 })
-  end
-
   M._check_complete(bufnr, session)
   if M.get(bufnr) then
     M.goto_next(bufnr)
@@ -144,12 +138,6 @@ function M.reject_at_cursor(bufnr)
 
   hunk_mod.reject(hunk, bufnr, session.hunks)
   ui.render(bufnr, session.hunks, session.opts)
-
-  -- Auto-jump to next pending hunk (VSCode Copilot behaviour).
-  local next = hunk_mod.next_hunk(line, session.hunks)
-  if next then
-    vim.api.nvim_win_set_cursor(0, { next.start_after, 0 })
-  end
 
   M._check_complete(bufnr, session)
   if M.get(bufnr) then
