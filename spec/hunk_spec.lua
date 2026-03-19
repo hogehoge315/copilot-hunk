@@ -171,3 +171,25 @@ describe("hunk_mod.next_hunk() / prev_hunk()", function()
     assert.is_nil(hunk_mod.prev_hunk(1, hunks))
   end)
 end)
+
+describe("hunk_mod.next_hunk_wrap() / prev_hunk_wrap()", function()
+  it("next_hunk_wrap wraps to first when past all", function()
+    local hunks = {
+      make_hunk(1, "change", 2, 2, 2, 2, { "a" }, { "A" }),
+      make_hunk(2, "change", 5, 5, 5, 5, { "b" }, { "B" }),
+    }
+    local h, wrapped = hunk_mod.next_hunk_wrap(10, hunks)
+    assert.are.equal(1, h.id)
+    assert.is_true(wrapped)
+  end)
+
+  it("prev_hunk_wrap wraps to last when before all", function()
+    local hunks = {
+      make_hunk(1, "change", 2, 2, 2, 2, { "a" }, { "A" }),
+      make_hunk(2, "change", 5, 5, 5, 5, { "b" }, { "B" }),
+    }
+    local h, wrapped = hunk_mod.prev_hunk_wrap(1, hunks)
+    assert.are.equal(2, h.id)
+    assert.is_true(wrapped)
+  end)
+end)
