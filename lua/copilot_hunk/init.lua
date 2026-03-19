@@ -21,7 +21,7 @@ M._opts = {
     delete = {},
     change = {},
   },
-  signs   = true,
+  signs   = false,
   keymaps = true,
 }
 

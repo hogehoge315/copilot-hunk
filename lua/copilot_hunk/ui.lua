@@ -21,12 +21,27 @@ function M.define_highlights(opts)
   opts = opts or {}
 
   local defaults = {
-    CopilotHunkAdd = { bg = "#1e3a2f", bold = false },
-    CopilotHunkDelete = { bg = "#3a1e1e", bold = false },
-    CopilotHunkChange = { bg = "#2e2a12", bold = false },
-    CopilotHunkAddSign = { fg = "#3fb950", bold = true },
-    CopilotHunkDeleteSign = { fg = "#f85149", bold = true },
-    CopilotHunkChangeSign = { fg = "#d29922", bold = true },
+    -- Line-level backgrounds (muted, lighter)
+    CopilotHunkAdd         = { bg = "#1a2e1a" },
+    CopilotHunkDelete      = { bg = "#2e1a1a" },
+    CopilotHunkChange      = { bg = "#2a2410" },
+
+    -- Inline content highlights (vivid, darker - rendered on top of line bg)
+    CopilotHunkAddText     = { bg = "#2d5230" },
+    CopilotHunkDeleteText  = { bg = "#522d2d" },
+    CopilotHunkChangeText  = { bg = "#4a3c18" },
+
+    -- For char-level inline diff within change hunks (even more vivid)
+    CopilotHunkChangeChar  = { bg = "#6b5420" },
+    CopilotHunkDeleteChar  = { bg = "#6b2020" },
+
+    -- Counter virt_text
+    CopilotHunkCount       = { fg = "#888888", italic = true },
+
+    -- Sign column
+    CopilotHunkAddSign     = { fg = "#3fb950", bold = true },
+    CopilotHunkDeleteSign  = { fg = "#f85149", bold = true },
+    CopilotHunkChangeSign  = { fg = "#d29922", bold = true },
   }
 
   local overrides = {
@@ -63,6 +78,8 @@ function M.render(bufnr, hunks, opts)
       M._render_hunk(bufnr, ns, hunk, show_signs)
     end
   end
+
+  M._render_hunk_counters(bufnr, ns, hunks)
 end
 
 --- @private
@@ -70,7 +87,7 @@ function M._render_hunk(bufnr, ns, hunk, show_signs)
   local line_count = vim.api.nvim_buf_line_count(bufnr)
 
   if hunk.type == "add" then
-    -- Highlight each added line with a green background.
+    -- Highlight each added line with a green background + content overlay.
     for i = hunk.start_after, hunk.end_after do
       local row = i - 1  -- 0-indexed
       if row < line_count then
@@ -79,6 +96,14 @@ function M._render_hunk(bufnr, ns, hunk, show_signs)
           sign_text = show_signs and "▎" or nil,
           sign_hl_group = show_signs and "CopilotHunkAddSign" or nil,
           priority = 100,
+        })
+        local line_len = #(vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or "")
+        vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
+          end_row = row,
+          end_col = line_len,
+          hl_group = "CopilotHunkAddText",
+          hl_eol = true,
+          priority = 101,
         })
       end
     end
@@ -115,7 +140,7 @@ function M._render_hunk(bufnr, ns, hunk, show_signs)
       })
     end
 
-    -- Highlight each changed line with a yellow background.
+    -- Highlight each changed line with a yellow background + content overlay.
     for i = hunk.start_after, hunk.end_after do
       local row = i - 1
       if row < line_count then
@@ -124,6 +149,85 @@ function M._render_hunk(bufnr, ns, hunk, show_signs)
           sign_text = show_signs and "▎" or nil,
           sign_hl_group = show_signs and "CopilotHunkChangeSign" or nil,
           priority = 100,
+        })
+        local line_len = #(vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or "")
+        vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
+          end_row = row,
+          end_col = line_len,
+          hl_group = "CopilotHunkChangeText",
+          hl_eol = true,
+          priority = 101,
+        })
+      end
+    end
+
+    -- Character-level inline diff for changed lines.
+    M._render_char_diff(bufnr, ns, hunk)
+  end
+end
+
+--- Character-level inline diff highlighting for "change" hunks.
+--- Compares before/after lines character-by-character and highlights
+--- the differing characters with CopilotHunkChangeChar.
+--- @private
+function M._render_char_diff(bufnr, ns, hunk)
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  local pairs_count = math.min(#hunk.before_lines, #hunk.after_lines)
+
+  for i = 1, pairs_count do
+    local before = hunk.before_lines[i]
+    local after  = hunk.after_lines[i]
+    local row    = hunk.start_after - 1 + (i - 1)  -- 0-indexed
+
+    if row >= line_count then break end
+
+    -- Split strings into characters and diff them via vim.diff
+    local b_text = before:gsub(".", function(c) return c .. "\n" end)
+    local a_text = after:gsub(".",  function(c) return c .. "\n" end)
+
+    local ok, indices = pcall(vim.diff, b_text, a_text, { result_type = "indices" })
+    if not ok or not indices then return end
+
+    for _, idx in ipairs(indices) do
+      local _sb, _cb, start_a, count_a = idx[1], idx[2], idx[3], idx[4]
+      if count_a > 0 then
+        local col_start = start_a - 1  -- 0-indexed
+        local col_end   = col_start + count_a
+        -- Clamp to actual line length
+        local line_len = #after
+        col_end = math.min(col_end, line_len)
+        if col_start < col_end then
+          vim.api.nvim_buf_set_extmark(bufnr, ns, row, col_start, {
+            end_row   = row,
+            end_col   = col_end,
+            hl_group  = "CopilotHunkChangeChar",
+            priority  = 120,
+          })
+        end
+      end
+    end
+  end
+end
+
+--- Render [n/N] hunk counter as EOL virtual text on each hunk's first line.
+--- @private
+function M._render_hunk_counters(bufnr, ns, hunks)
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  local pending = {}
+  for _, h in ipairs(hunks) do
+    if h.status ~= "rejected" then
+      pending[#pending + 1] = h
+    end
+  end
+  local total = #pending
+  for idx, h in ipairs(pending) do
+    if h.status == "pending" then
+      local row = math.max(h.start_after - 1, 0)  -- 0-indexed
+      if row < line_count then
+        vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
+          virt_text = { { string.format("[%d/%d]", idx, total), "CopilotHunkCount" } },
+          virt_text_pos = "eol",
+          priority = 90,
         })
       end
     end
