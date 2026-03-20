@@ -355,6 +355,77 @@ function M._detect_ai_edited_via_git(_snap_store, last_nvim_write)
 
     ::continue::
   end
+
+  -- New (untracked) files created by AI
+  local cwd_esc = vim.fn.shellescape(cwd)
+  local new_files = vim.fn.systemlist(
+    "git -C " .. cwd_esc .. " ls-files --others --exclude-standard 2>/dev/null"
+  )
+  for _, relpath in ipairs(new_files or {}) do
+    local fullpath = cwd .. "/" .. relpath
+    if vim.fn.filereadable(fullpath) == 0 then goto cont_new end
+
+    local nbufnr = vim.fn.bufnr(fullpath)
+    local nloaded = nbufnr ~= -1 and vim.api.nvim_buf_is_loaded(nbufnr)
+    if nloaded and M.has_session(nbufnr) then goto cont_new end
+
+    -- Load buffer (reads AI-created file from disk)
+    nbufnr = vim.fn.bufadd(fullpath)
+    vim.bo[nbufnr].buflisted = false
+    vim.fn.bufload(nbufnr)
+
+    local new_current = vim.api.nvim_buf_get_lines(nbufnr, 0, -1, false)
+    if #new_current == 0 or (#new_current == 1 and new_current[1] == "") then goto cont_new end
+
+    if not M.has_session(nbufnr) then
+      require("copilot_hunk.session").start(
+        nbufnr,
+        {},  -- base = empty (new file)
+        vim.tbl_extend("force", M._opts, {
+          _session_kind = "new_file",
+          _session_file_path = fullpath,
+        })
+      )
+    end
+    ::cont_new::
+  end
+
+  -- Deleted (tracked) files removed by AI
+  local deleted_files = vim.fn.systemlist(
+    "git -C " .. cwd_esc .. " ls-files --deleted 2>/dev/null"
+  )
+  for _, relpath in ipairs(deleted_files or {}) do
+    local fullpath = cwd .. "/" .. relpath
+    -- File should NOT exist on disk
+    if vim.fn.filereadable(fullpath) == 1 then goto cont_del end
+
+    local dbufnr = vim.fn.bufnr(fullpath)
+    if dbufnr ~= -1 and M.has_session(dbufnr) then goto cont_del end
+
+    -- Get original content from git HEAD
+    local del_base_lines = vim.fn.systemlist(
+      "git -C " .. cwd_esc .. " show HEAD:" .. vim.fn.shellescape(relpath) .. " 2>/dev/null"
+    )
+    if not del_base_lines or #del_base_lines == 0 then goto cont_del end
+
+    -- Create buffer with empty content (file is deleted)
+    dbufnr = vim.fn.bufadd(fullpath)
+    vim.bo[dbufnr].buflisted = false
+    vim.fn.bufload(dbufnr)
+    vim.api.nvim_buf_set_lines(dbufnr, 0, -1, false, {})
+
+    if not M.has_session(dbufnr) then
+      require("copilot_hunk.session").start(
+        dbufnr,
+        del_base_lines,  -- base = original content
+        vim.tbl_extend("force", M._opts, {
+          _session_kind = "deleted_file",
+          _session_file_path = fullpath,
+        })
+      )
+    end
+    ::cont_del::
+  end
 end
 
 --- Statusline / tabline component.

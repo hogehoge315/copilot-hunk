@@ -19,8 +19,12 @@ local M = {}
 --- @param ai_result_lines string[]
 --- @return Hunk[]
 function M.diff(base_lines, ai_result_lines)
-  local base_text = table.concat(base_lines, "\n") .. "\n"
-  local ai_text = table.concat(ai_result_lines, "\n") .. "\n"
+  -- Normalize: a buffer with only one empty line is equivalent to empty content.
+  if #base_lines == 1 and base_lines[1] == "" then base_lines = {} end
+  if #ai_result_lines == 1 and ai_result_lines[1] == "" then ai_result_lines = {} end
+
+  local base_text = #base_lines > 0 and (table.concat(base_lines, "\n") .. "\n") or ""
+  local ai_text = #ai_result_lines > 0 and (table.concat(ai_result_lines, "\n") .. "\n") or ""
 
   -- vim.diff with result_type="indices" returns a list of
   -- { start_a, count_a, start_b, count_b } tables (1-indexed).
