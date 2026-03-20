@@ -436,6 +436,49 @@ function M._check_complete(bufnr, session)
   _notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO, session.opts)
 end
 
+--- Transfer a session from old_bufnr to new_bufnr (same file, different bufnr).
+--- Used when a user opens a file via Telescope/FZF/nvim-tree and a hidden buffer
+--- already has a session for that file.
+--- Re-renders hunks and attaches keymaps on the new buffer.
+--- Deletes the old unlisted/hidden buffer to prevent duplicates.
+--- @param old_bufnr number
+--- @param new_bufnr number
+function M._transfer_session(old_bufnr, new_bufnr)
+  local s = M._sessions[old_bufnr]
+  if not s then return end
+
+  -- Update session to new bufnr.
+  s.bufnr = new_bufnr
+  M._sessions[new_bufnr] = s
+  M._sessions[old_bufnr] = nil
+
+  -- Update session order.
+  for i, b in ipairs(M._session_order) do
+    if b == old_bufnr then
+      M._session_order[i] = new_bufnr
+      break
+    end
+  end
+
+  -- Re-render hunks on the new buffer with correct global counters.
+  local off, tot = global_counts(new_bufnr)
+  ui.render(new_bufnr, s.hunks, s.opts, off, tot)
+  keymap.attach(new_bufnr)
+
+  -- Update decoration.
+  local pend = 0
+  for _, h in ipairs(s.hunks) do
+    if h.status == "pending" then pend = pend + 1 end
+  end
+  decoration.update(new_bufnr, pend, s.opts)
+
+  -- Remove old hidden/unlisted buffer to prevent duplicates in buffer list.
+  if vim.api.nvim_buf_is_valid(old_bufnr)
+      and not vim.bo[old_bufnr].buflisted then
+    pcall(vim.api.nvim_buf_delete, old_bufnr, { force = true })
+  end
+end
+
 --- @private
 --- Open a buffer in the current window, using :edit for hidden buffers to
 --- ensure FileType / LSP / Treesitter autocmds fire properly.

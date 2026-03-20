@@ -312,14 +312,49 @@ function M._setup_auto_snapshot()
   -- BufEnter: take snapshot + run checktime for the entered buffer.
   -- This handles AI edits to inactive buffers while Neovim remains focused.
   -- FileChangedShell for a non-current buffer fires only when that buffer is entered.
+  -- Also transfers sessions from hidden bufnrs when user opens the same file
+  -- via Telescope/FZF/nvim-tree/:edit (fixes #36).
   vim.api.nvim_create_autocmd("BufEnter", {
     group = aug,
     callback = function(args)
       local bufnr = args.buf
-      if M.has_session(bufnr) then return end
       if vim.bo[bufnr].buftype ~= "" then return end
       if not vim.api.nvim_buf_is_loaded(bufnr) then return end
-      if snap_store[bufnr] then return end  -- snapshot already in progress
+
+      -- Case 1: Session already exists for this bufnr.
+      -- Re-render to ensure extmarks are current (e.g., after switching away and back).
+      if M.has_session(bufnr) then
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(bufnr) then
+            require("copilot_hunk.session")._rerender_all()
+          end
+        end)
+        return
+      end
+
+      -- Case 2: Another bufnr holds a session for the SAME file path.
+      -- Transfer that session to the new listed bufnr (e.g. opened via Telescope).
+      local fname = vim.api.nvim_buf_get_name(bufnr)
+      if fname ~= "" then
+        local session_mod = require("copilot_hunk.session")
+        -- Snapshot _session_order to avoid mutation during iteration.
+        local order_snapshot = vim.list_slice(session_mod._session_order, 1)
+        for _, old_bufnr in ipairs(order_snapshot) do
+          if old_bufnr ~= bufnr
+              and vim.api.nvim_buf_is_valid(old_bufnr)
+              and vim.api.nvim_buf_get_name(old_bufnr) == fname then
+            vim.schedule(function()
+              if vim.api.nvim_buf_is_valid(bufnr) then
+                session_mod._transfer_session(old_bufnr, bufnr)
+              end
+            end)
+            return
+          end
+        end
+      end
+
+      -- Case 3: No session found → normal snapshot + checktime flow.
+      if snap_store[bufnr] then return end
 
       snap_store[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
