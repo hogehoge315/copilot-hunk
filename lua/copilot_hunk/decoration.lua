@@ -9,6 +9,17 @@ local _ns = nil  -- diagnostic namespace
 --- Initialize decoration subsystem. Called from setup().
 function M.setup()
   _ns = vim.api.nvim_create_namespace("copilot_hunk_diag")
+  -- Suppress ALL visual output for our diagnostic namespace.
+  -- The entries exist only so nvim-tree / neo-tree / statusline can read them
+  -- via vim.diagnostic.get(). No popups, no signs, no virtual text ever.
+  vim.diagnostic.config({
+    virtual_text     = false,
+    signs            = false,
+    underline        = false,
+    float            = false,
+    update_in_insert = false,
+    severity_sort    = false,
+  }, _ns)
 end
 
 --- Mark a buffer as having AI-pending hunks.
@@ -32,7 +43,7 @@ function M.mark(bufnr, pending_count, opts)
         message  = string.format("AI変更あり (%d hunk)", pending_count),
         source   = "copilot-hunk",
       },
-    }, { virtual_text = false, signs = false, underline = false })
+    })
   end
 
   local show_winbar = opts.decorations and opts.decorations.winbar
