@@ -331,9 +331,57 @@ end
 
 --- @private
 --- Check whether all hunks have been resolved and auto-stop the session.
+--- For new_file / deleted_file sessions, performs FS operations before stopping.
 function M._check_complete(bufnr, session)
   for _, h in ipairs(session.hunks) do
     if h.status == "pending" then return end
+  end
+
+  -- FS operations for new/deleted file sessions (before stop clears session state)
+  local kind  = session.opts and session.opts._session_kind
+  local fpath = session.opts and session.opts._session_file_path
+  if kind and fpath and vim.api.nvim_buf_is_valid(bufnr) then
+    local final_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local is_empty = #final_lines == 0 or (#final_lines == 1 and final_lines[1] == "")
+
+    if kind == "new_file" then
+      if is_empty then
+        -- All hunks rejected: delete file from disk
+        vim.fn.delete(fpath)
+        M.stop(bufnr)
+        if vim.api.nvim_buf_is_valid(bufnr) then
+          vim.api.nvim_buf_delete(bufnr, { force = true })
+        end
+      else
+        -- Some/all hunks accepted: save buffer to disk
+        vim.api.nvim_buf_call(bufnr, function()
+          vim.cmd("silent! write!")
+        end)
+        M.stop(bufnr)
+      end
+      vim.notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO)
+      return
+    elseif kind == "deleted_file" then
+      if not is_empty then
+        -- Some/all hunks rejected: restore file to disk
+        -- Strip trailing empty line (Neovim buffers always end with one)
+        if #final_lines > 0 and final_lines[#final_lines] == "" then
+          final_lines = vim.list_slice(final_lines, 1, #final_lines - 1)
+        end
+        vim.fn.writefile(final_lines, fpath)
+        if vim.api.nvim_buf_is_valid(bufnr) then
+          vim.bo[bufnr].modified = false
+        end
+      else
+        -- All hunks accepted: file stays deleted, delete buffer
+        M.stop(bufnr)
+        if vim.api.nvim_buf_is_valid(bufnr) then
+          vim.api.nvim_buf_delete(bufnr, { force = true })
+        end
+        vim.notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO)
+        return
+      end
+    end
   end
 
   M.stop(bufnr)

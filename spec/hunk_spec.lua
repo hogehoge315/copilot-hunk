@@ -99,6 +99,22 @@ describe("hunk_mod.reject()", function()
     assert.are.same({ "a", "b", "c" }, lines)
   end)
 
+  it("removes added lines for an add hunk", function()
+    local bufnr = create_test_buf({ "a", "ADDED", "b" })
+    local h = make_hunk(1, "add", 0, 0, 2, 2, {}, { "ADDED" })
+    hunk_mod.reject(h, bufnr, { h })
+    assert.are.same({ "a", "b" }, get_buf_lines(bufnr))
+  end)
+
+  it("re-inserts all before_lines for a full-file delete hunk", function()
+    -- Simulates deleted-file scenario: buffer is empty, hunk has all original lines
+    local bufnr = create_test_buf({ "" })
+    local h = make_hunk(1, "delete", 1, 3, 0, 0, { "x", "y", "z" }, {})
+    hunk_mod.reject(h, bufnr, { h })
+    local lines = get_buf_lines(bufnr)
+    assert.are.same({ "x", "y", "z", "" }, lines)
+  end)
+
   it("shifts later pending hunks by the correct offset", function()
     -- base: 3 lines, ai_result: 4 lines (one extra added in hunk1)
     -- hunk1: add 1 line at position 2  (before=0, after=1 → delta = -1 on reject)
