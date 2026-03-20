@@ -265,12 +265,8 @@ function M.goto_next(bufnr)
   if cross == nil then cross = true end
   local next_bufnr = cross and M._next_session_bufnr(bufnr) or nil
   if next_bufnr and next_bufnr ~= bufnr then
-    -- Restore buflisted for hidden buffers we loaded via git detection
-    if not vim.bo[next_bufnr].buflisted then
-      vim.bo[next_bufnr].buflisted = true
-    end
-    vim.api.nvim_set_current_buf(next_bufnr)
-    local ns = M.get(next_bufnr)
+    local actual_bufnr = M._open_buffer(next_bufnr)
+    local ns = M.get(actual_bufnr)
     if ns then
       local first = hunk_mod.next_hunk(0, ns.hunks)
       if first then
@@ -307,11 +303,8 @@ function M.goto_prev(bufnr)
   if cross == nil then cross = true end
   local prev_bufnr = cross and M._prev_session_bufnr(bufnr) or nil
   if prev_bufnr and prev_bufnr ~= bufnr then
-    if not vim.bo[prev_bufnr].buflisted then
-      vim.bo[prev_bufnr].buflisted = true
-    end
-    vim.api.nvim_set_current_buf(prev_bufnr)
-    local ps = M.get(prev_bufnr)
+    local actual_bufnr = M._open_buffer(prev_bufnr)
+    local ps = M.get(actual_bufnr)
     if ps then
       local last = hunk_mod.prev_hunk(math.huge, ps.hunks)
       if last then
@@ -386,6 +379,61 @@ function M._check_complete(bufnr, session)
 
   M.stop(bufnr)
   vim.notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO)
+end
+
+--- @private
+--- Open a buffer in the current window, using :edit for hidden buffers to
+--- ensure FileType / LSP / Treesitter autocmds fire properly.
+--- Returns the actual bufnr after opening (may differ if :edit creates a new buf).
+--- @param target_bufnr number
+--- @return number  actual bufnr now current
+function M._open_buffer(target_bufnr)
+  local fname = vim.api.nvim_buf_get_name(target_bufnr)
+  local was_hidden = not vim.bo[target_bufnr].buflisted
+
+  if fname ~= "" and was_hidden then
+    if vim.fn.filereadable(fname) == 1 then
+      -- Use :edit to trigger full autocmd chain (BufReadPost, FileType, LSP attach).
+      vim.cmd("edit " .. vim.fn.fnameescape(fname))
+      local cur_bufnr = vim.api.nvim_get_current_buf()
+
+      -- Transfer session data if :edit assigned a different bufnr.
+      if cur_bufnr ~= target_bufnr and M._sessions[target_bufnr] then
+        local s = M._sessions[target_bufnr]
+        s.bufnr = cur_bufnr
+        M._sessions[cur_bufnr] = s
+        M._sessions[target_bufnr] = nil
+
+        for i, b in ipairs(M._session_order) do
+          if b == target_bufnr then
+            M._session_order[i] = cur_bufnr
+            break
+          end
+        end
+
+        -- Re-attach keymaps and re-render on the new bufnr.
+        local off, tot = global_counts(cur_bufnr)
+        ui.render(cur_bufnr, s.hunks, s.opts, off, tot)
+        keymap.attach(cur_bufnr)
+      end
+    else
+      -- File doesn't exist (deleted file buffer): set filetype and switch.
+      vim.bo[target_bufnr].buflisted = true
+      vim.api.nvim_set_current_buf(target_bufnr)
+      -- Trigger FileType manually so syntax highlighting can activate.
+      if vim.bo[target_bufnr].filetype ~= "" then
+        vim.api.nvim_exec_autocmds("FileType", {
+          buffer = target_bufnr,
+          modeline = false,
+        })
+      end
+    end
+    return vim.api.nvim_get_current_buf()
+  else
+    -- Buffer already has correct setup (was buflisted); just switch.
+    vim.api.nvim_set_current_buf(target_bufnr)
+    return target_bufnr
+  end
 end
 
 --- @private

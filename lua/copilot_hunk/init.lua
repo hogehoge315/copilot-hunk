@@ -347,6 +347,15 @@ function M._detect_ai_edited_via_git(_snap_store, last_nvim_write)
     bufnr = vim.fn.bufadd(fullpath)
     vim.bo[bufnr].buflisted = false
     vim.fn.bufload(bufnr)
+    -- Set filetype so syntax/LSP can potentially work even before :edit
+    local ft = vim.filetype.match({ filename = relpath, buf = bufnr })
+    if ft and ft ~= "" then
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(bufnr) then
+          vim.bo[bufnr].filetype = ft
+        end
+      end)
+    end
 
     local current = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     if not vim.deep_equal(base_lines, current) and not M.has_session(bufnr) then
@@ -373,6 +382,15 @@ function M._detect_ai_edited_via_git(_snap_store, last_nvim_write)
     nbufnr = vim.fn.bufadd(fullpath)
     vim.bo[nbufnr].buflisted = false
     vim.fn.bufload(nbufnr)
+    -- Set filetype so syntax/LSP can potentially work even before :edit
+    local nft = vim.filetype.match({ filename = relpath, buf = nbufnr })
+    if nft and nft ~= "" then
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(nbufnr) then
+          vim.bo[nbufnr].filetype = nft
+        end
+      end)
+    end
 
     local new_current = vim.api.nvim_buf_get_lines(nbufnr, 0, -1, false)
     if #new_current == 0 or (#new_current == 1 and new_current[1] == "") then goto cont_new end
@@ -412,6 +430,15 @@ function M._detect_ai_edited_via_git(_snap_store, last_nvim_write)
     dbufnr = vim.fn.bufadd(fullpath)
     vim.bo[dbufnr].buflisted = false
     vim.fn.bufload(dbufnr)
+    -- Set filetype so syntax/LSP can potentially work even before :edit
+    local dft = vim.filetype.match({ filename = relpath, buf = dbufnr })
+    if dft and dft ~= "" then
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(dbufnr) then
+          vim.bo[dbufnr].filetype = dft
+        end
+      end)
+    end
     vim.api.nvim_buf_set_lines(dbufnr, 0, -1, false, {})
 
     if not M.has_session(dbufnr) then
