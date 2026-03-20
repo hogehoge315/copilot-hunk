@@ -15,19 +15,35 @@ No manual setup needed: the review session starts and ends automatically.
 
 - **Auto-detection of AI edits** — no manual snapshot step.
   When an external tool writes a file, `FileChangedShell` / `FocusGained` fires and
-  a review session starts automatically.
+  a review session starts automatically. Unloaded buffers are also detected via
+  `git diff` / `git ls-files` on `FocusGained`.
 - **Formatter false-positive prevention** — `BufWritePre` timestamp guard ignores
   file changes within 2 seconds of a Neovim save (stylua, prettier, LSP format, etc.).
 - **Inline diff with 2-tier colouring** — muted background on the entire changed line,
   vivid overlay on the changed text region (like GitHub's diff view).
 - **Character-level diff** — within change hunks, the exact modified characters are
   highlighted with an even stronger colour (`CopilotHunkChangeChar`).
-- **Hunk counter** — each pending hunk shows `[1/3]` virtual text at end-of-line.
+- **Hunk counter** — each pending hunk shows `[1/4]` virtual text at end-of-line
+  (global across all files).
 - **`n` / `N` navigation with wrap-around** — jump between hunks just like search.
 - **Cross-file navigation** — `n` / `N` crosses buffer boundaries when multiple files
   have active sessions, cycling through all pending hunks.
+- **New file / deleted file support** — AI-created files show all content as "add" hunks
+  (accept = save, reject = delete). AI-deleted files show all content as "delete" hunks
+  (accept = delete, reject = restore).
 - **Accept / reject at three levels** — hunk (`ga` / `gr`), file (`gA` / `gR`),
-  or all files (`gAA` / `gRR`).
+  or all files (`gAA` / `gRR`). After accept/reject, the hunk highlight disappears
+  immediately and auto-jumps to the next pending hunk (even across files).
+- **Robot icon 🤖 decoration** — buffers with pending hunks get a HINT diagnostic,
+  automatically picked up by nvim-tree / neo-tree to show the 🤖 icon.
+  Also provides `statusline_component()` for lualine integration.
+- **Notification control** — `notify_level` option (default `WARN`) suppresses
+  routine INFO notifications for a quieter experience.
+- **Reviewed-state persistence** — after all hunks in a file are resolved, the file
+  path + SHA-256 hash is saved to `.git/copilot-hunk-reviewed`. On next session start,
+  matching files are skipped. Re-editing by AI auto-invalidates the hash.
+- **Telescope / FZF / nvim-tree compatibility** — when you open a file via Telescope
+  or FZF that has pending AI hunks, the session is auto-transferred to the new buffer.
 - **Git-independent** — works on any buffer, no Git repo required.
 
 ---
@@ -64,13 +80,19 @@ use {
 
 ```lua
 require("copilot_hunk").setup({
-  enable_auto_snapshot = true,   -- auto-detect AI file edits
-  signs   = false,               -- sign column markers (default: false)
-  keymaps = true,                -- install default keymaps
+  enable_auto_snapshot = true,     -- auto-detect AI file edits (default: true)
+  signs   = false,                 -- sign column markers (default: false)
+  keymaps = true,                  -- install default keymaps (default: true)
+  cross_file_navigation = true,    -- n/N crosses file boundaries (default: true)
+  notify_level = vim.log.levels.WARN,  -- notification verbosity (default: WARN)
+  decorations = {
+    winbar = false,                -- WinBar display (default: false)
+    icon   = "🤖",                -- icon for WinBar/statusline
+  },
   highlights = {
-    add    = {},   -- override CopilotHunkAdd bg
-    delete = {},   -- override CopilotHunkDelete bg
-    change = {},   -- override CopilotHunkChange bg
+    add    = {},                   -- override CopilotHunkAdd bg
+    delete = {},                   -- override CopilotHunkDelete bg
+    change = {},                   -- override CopilotHunkChange bg
   },
 })
 ```
@@ -119,6 +141,34 @@ end)
 | `:CopilotHunkAcceptAllFiles` | Accept all hunks across all active sessions |
 | `:CopilotHunkRejectAllFiles` | Reject all hunks across all active sessions |
 | `:CopilotHunkEnd` | End the current session |
+
+---
+
+## Integrations
+
+### Statusline (lualine, etc.)
+
+```lua
+-- In your lualine config:
+sections = {
+  lualine_x = {
+    { require("copilot_hunk.decoration").statusline_component },
+  }
+}
+```
+
+Shows `🤖 3` when the current buffer has 3 pending AI hunks.
+
+### nvim-tree / neo-tree
+
+The plugin places a HINT-level diagnostic on buffers with pending hunks.
+nvim-tree and neo-tree automatically read `vim.diagnostic.get()` and show
+the robot icon 🤖 on files with pending hunks — no extra configuration needed.
+
+### Telescope / FZF
+
+Works out of the box. When you open a file via Telescope or FZF that has
+pending AI hunks, the hunks are automatically displayed.
 
 ---
 
