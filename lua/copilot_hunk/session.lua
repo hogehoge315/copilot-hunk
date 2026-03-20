@@ -260,9 +260,15 @@ function M.goto_next(bufnr)
     return
   end
 
-  -- No forward hunk in this file (or would wrap) → try next file.
-  local next_bufnr = M._next_session_bufnr(bufnr)
+  -- No forward hunk in this file (or would wrap) → try next file if cross_file_navigation enabled.
+  local cross = session.opts and session.opts.cross_file_navigation
+  if cross == nil then cross = true end
+  local next_bufnr = cross and M._next_session_bufnr(bufnr) or nil
   if next_bufnr and next_bufnr ~= bufnr then
+    -- Restore buflisted for hidden buffers we loaded via git detection
+    if not vim.bo[next_bufnr].buflisted then
+      vim.bo[next_bufnr].buflisted = true
+    end
     vim.api.nvim_set_current_buf(next_bufnr)
     local ns = M.get(next_bufnr)
     if ns then
@@ -296,9 +302,14 @@ function M.goto_prev(bufnr)
     return
   end
 
-  -- No backward hunk → try previous file.
-  local prev_bufnr = M._prev_session_bufnr(bufnr)
+  -- No backward hunk → try previous file if cross_file_navigation enabled.
+  local cross = session.opts and session.opts.cross_file_navigation
+  if cross == nil then cross = true end
+  local prev_bufnr = cross and M._prev_session_bufnr(bufnr) or nil
   if prev_bufnr and prev_bufnr ~= bufnr then
+    if not vim.bo[prev_bufnr].buflisted then
+      vim.bo[prev_bufnr].buflisted = true
+    end
     vim.api.nvim_set_current_buf(prev_bufnr)
     local ps = M.get(prev_bufnr)
     if ps then

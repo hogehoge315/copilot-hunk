@@ -77,6 +77,17 @@ FileChangedShell  ──→  if now() - last_nvim_write[buf] < 2000ms → skip (
 - 現在ファイルの最後のhunkから `n` → 次のファイルの最初のhunkへ
 - pending hunk がないセッションはスキップ
 - すべてのファイルを周回して元のファイルに戻るループ
+- `cross_file_navigation = false` で無効化可能（現在バッファ内のみでラップ）
+
+### 未ロードバッファの自動検出
+
+`cross_file_navigation = true`（デフォルト）の場合、`FocusGained` 時に
+`git diff --name-only HEAD` を実行し、まだ Neovim で開いていない変更ファイルを検出する。
+
+- 検出されたファイルは非表示バッファ (`buflisted = false`) として読み込まれ、セッションが開始される
+- これにより、1ファイルしか開いていなくても `[1/2]` のようにグローバルカウンターが正しく表示される
+- `n`/`N` で未ロードバッファへ移動すると、自動的に `buflisted = true` に設定される
+- git が利用できないプロジェクトでは静かにスキップされる
 
 ## ビジュアル仕様
 
@@ -132,6 +143,10 @@ require('copilot_hunk').setup({
 
   -- キーマップを自動設定 (default: true)
   keymaps = true,
+
+  -- n/N でファイルをまたいだ hunk 移動を有効にする (default: true)
+  -- false にすると現在バッファ内のみでラップする
+  cross_file_navigation = true,
 
   -- デコレーション設定
   decorations = {

@@ -26,6 +26,7 @@ M._opts = {
   signs   = false,
   keymaps = true,
   enable_auto_snapshot = true,
+  cross_file_navigation = true,
   decorations = {
     winbar = false,   -- opt-in WinBar (may conflict with other winbar plugins)
     icon   = "🤖",   -- icon shown in WinBar / statusline
@@ -229,6 +230,10 @@ function M._setup_auto_snapshot()
           snap_store[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
         end
       end
+      -- Detect AI-edited unloaded files via git (for cross-file global counter)
+      if M._opts.cross_file_navigation then
+        M._detect_ai_edited_via_git(snap_store, last_nvim_write)
+      end
       -- Run checktime to trigger FileChangedShell for changed files.
       vim.cmd("checktime")
     end,
@@ -300,6 +305,56 @@ function M._setup_auto_snapshot()
       end, 50)
     end,
   })
+end
+
+--- @private
+--- Detect AI-edited files not yet loaded as buffers by checking git diff.
+--- For each unloaded modified file, loads it as a hidden buffer and starts a session.
+--- Only runs when git is available. Skips non-git projects silently.
+--- @param _snap_store table   per-bufnr snapshot store (unused here but kept for API consistency)
+--- @param last_nvim_write table  per-bufnr timestamp of last BufWritePre
+function M._detect_ai_edited_via_git(_snap_store, last_nvim_write)
+  if vim.fn.executable("git") == 0 then return end
+  local cwd = vim.fn.getcwd()
+  local files = vim.fn.systemlist(
+    "git -C " .. vim.fn.shellescape(cwd) .. " diff --name-only HEAD 2>/dev/null"
+  )
+  if not files or #files == 0 then return end
+
+  local now = vim.uv.now()
+  for _, relpath in ipairs(files) do
+    local fullpath = cwd .. "/" .. relpath
+    if vim.fn.filereadable(fullpath) == 0 then goto continue end
+
+    local bufnr = vim.fn.bufnr(fullpath)
+    local already_loaded = bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr)
+    if already_loaded then goto continue end
+
+    -- Formatter guard: skip if recently written by Neovim
+    if bufnr ~= -1 and last_nvim_write[bufnr] then
+      if (now - last_nvim_write[bufnr]) < 2000 then goto continue end
+    end
+
+    if bufnr ~= -1 and M.has_session(bufnr) then goto continue end
+
+    local base_lines = vim.fn.systemlist(
+      "git -C " .. vim.fn.shellescape(cwd)
+      .. " show HEAD:" .. vim.fn.shellescape(relpath) .. " 2>/dev/null"
+    )
+    if not base_lines or #base_lines == 0 then goto continue end
+
+    -- Load buffer (reads AI-edited content from disk)
+    bufnr = vim.fn.bufadd(fullpath)
+    vim.bo[bufnr].buflisted = false
+    vim.fn.bufload(bufnr)
+
+    local current = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    if not vim.deep_equal(base_lines, current) and not M.has_session(bufnr) then
+      require("copilot_hunk.session").start(bufnr, base_lines, M._opts)
+    end
+
+    ::continue::
+  end
 end
 
 --- Statusline / tabline component.
