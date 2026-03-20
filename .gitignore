@@ -20,3 +20,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.sublime-*
+
+# copilot-hunk reviewed state (fallback location outside .git/)
+.copilot-hunk-reviewed

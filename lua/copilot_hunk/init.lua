@@ -16,6 +16,75 @@
 
 local M = {}
 
+--- @private
+--- Conditionally emit a notification based on minimum notify_level.
+--- @param msg string
+--- @param level number  vim.log.levels.*
+--- @param opts? table   plugin opts (uses notify_level field)
+local function _notify(msg, level, opts)
+  local min_level = (opts and opts.notify_level) or vim.log.levels.WARN
+  if level >= min_level then
+    vim.notify(msg, level)
+  end
+end
+
+--- Returns path to the reviewed-state file.
+--- Prefers .git/copilot-hunk-reviewed, falls back to .copilot-hunk-reviewed in cwd.
+local function _state_file_path()
+  local git_dir = vim.fn.finddir(".git", vim.fn.getcwd() .. ";")
+  if git_dir and git_dir ~= "" then
+    return vim.fn.fnamemodify(git_dir, ":p") .. "copilot-hunk-reviewed"
+  end
+  return vim.fn.getcwd() .. "/.copilot-hunk-reviewed"
+end
+
+--- Load the reviewed state from disk → { [relpath] = sha256_hash }
+local function _load_reviewed_state()
+  local path = _state_file_path()
+  local state = {}
+  if vim.fn.filereadable(path) == 0 then return state end
+  for _, line in ipairs(vim.fn.readfile(path)) do
+    local rel, hash = line:match("^(.+):([a-f0-9]+)$")
+    if rel and hash then state[rel] = hash end
+  end
+  return state
+end
+
+--- Save the reviewed state to disk.
+local function _save_reviewed_state(state)
+  local path = _state_file_path()
+  local lines = {}
+  for rel, hash in pairs(state) do
+    lines[#lines + 1] = rel .. ":" .. hash
+  end
+  vim.fn.writefile(lines, path)
+end
+
+--- Mark a file as reviewed (called after session completes).
+--- @param fullpath string  absolute path
+function M._mark_reviewed(fullpath)
+  local cwd = vim.fn.getcwd()
+  local relpath = fullpath:sub(#cwd + 2)  -- strip cwd + separator
+  if vim.fn.filereadable(fullpath) == 0 then return end  -- deleted file, skip
+  local lines = vim.fn.readfile(fullpath)
+  local hash = vim.fn.sha256(table.concat(lines, "\n"))
+  local state = _load_reviewed_state()
+  state[relpath] = hash
+  _save_reviewed_state(state)
+end
+
+--- Return true if the file has already been reviewed with its current content.
+--- @param fullpath string
+--- @param relpath string
+local function _is_reviewed(fullpath, relpath)
+  if vim.fn.filereadable(fullpath) == 0 then return false end
+  local state = _load_reviewed_state()
+  if not state[relpath] then return false end
+  local lines = vim.fn.readfile(fullpath)
+  local hash = vim.fn.sha256(table.concat(lines, "\n"))
+  return hash == state[relpath]
+end
+
 --- Default configuration.
 M._opts = {
   highlights = {
@@ -27,6 +96,7 @@ M._opts = {
   keymaps = true,
   enable_auto_snapshot = true,
   cross_file_navigation = true,
+  notify_level = vim.log.levels.WARN,
   decorations = {
     winbar = false,   -- opt-in WinBar (may conflict with other winbar plugins)
     icon   = "🤖",   -- icon shown in WinBar / statusline
@@ -124,7 +194,7 @@ function M.arm(bufnr)
       if not vim.deep_equal(base, current) then
         require("copilot_hunk.session").start(bufnr, base, M._opts)
       else
-        vim.notify("[copilot-hunk] 変更が検出されませんでした。", vim.log.levels.INFO)
+        _notify("[copilot-hunk] 変更が検出されませんでした。", vim.log.levels.INFO, M._opts)
       end
     end, 80)
   end
@@ -148,9 +218,9 @@ function M.arm(bufnr)
   M._armed = M._armed or {}
   M._armed[bufnr] = { base = base, aug = aug_name, timer = timer, fname = fname }
 
-  vim.notify(
+  _notify(
     string.format("[copilot-hunk] Armed: %s — AIが編集したら自動でセッション開始します", vim.fn.fnamemodify(fname, ":t")),
-    vim.log.levels.INFO
+    vim.log.levels.INFO, M._opts
   )
 end
 
@@ -330,6 +400,9 @@ function M._detect_ai_edited_via_git(_snap_store, last_nvim_write)
     local already_loaded = bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr)
     if already_loaded then goto continue end
 
+    -- Skip if already reviewed with current content
+    if _is_reviewed(fullpath, relpath) then goto continue end
+
     -- Formatter guard: skip if recently written by Neovim
     if bufnr ~= -1 and last_nvim_write[bufnr] then
       if (now - last_nvim_write[bufnr]) < 2000 then goto continue end
@@ -373,6 +446,9 @@ function M._detect_ai_edited_via_git(_snap_store, last_nvim_write)
   for _, relpath in ipairs(new_files or {}) do
     local fullpath = cwd .. "/" .. relpath
     if vim.fn.filereadable(fullpath) == 0 then goto cont_new end
+
+    -- Skip if already reviewed with current content
+    if _is_reviewed(fullpath, relpath) then goto cont_new end
 
     local nbufnr = vim.fn.bufnr(fullpath)
     local nloaded = nbufnr ~= -1 and vim.api.nvim_buf_is_loaded(nbufnr)

@@ -9,6 +9,18 @@ local keymap     = require("copilot_hunk.keymap")
 local decoration = require("copilot_hunk.decoration")
 
 --- @private
+--- Conditionally emit a notification based on minimum notify_level.
+--- @param msg string
+--- @param level number  vim.log.levels.*
+--- @param opts? table   session opts (uses notify_level field)
+local function _notify(msg, level, opts)
+  local min_level = (opts and opts.notify_level) or vim.log.levels.WARN
+  if level >= min_level then
+    vim.notify(msg, level)
+  end
+end
+
+--- @private
 --- Calculate the global hunk offset and total across all active sessions.
 --- Counts non-rejected hunks (pending + accepted) to keep counter stable
 --- until a hunk is explicitly rejected.
@@ -70,7 +82,7 @@ function M.start(bufnr, base_lines, opts)
 
   local hunks = diff_mod.diff(base_lines, ai_result_lines)
   if #hunks == 0 then
-    vim.notify("[copilot-hunk] No differences found.", vim.log.levels.INFO)
+    _notify("[copilot-hunk] No differences found.", vim.log.levels.INFO, opts)
     return false
   end
 
@@ -97,9 +109,9 @@ function M.start(bufnr, base_lines, opts)
     end,
   })
 
-  vim.notify(
+  _notify(
     string.format("[copilot-hunk] Review started: %d hunk(s) to review.", #hunks),
-    vim.log.levels.INFO
+    vim.log.levels.INFO, opts
   )
   return true
 end
@@ -146,7 +158,7 @@ function M.accept_at_cursor(bufnr)
   local line = vim.api.nvim_win_get_cursor(0)[1]  -- 1-indexed
   local hunk = hunk_mod.hunk_at_line(line, session.hunks)
   if not hunk then
-    vim.notify("[copilot-hunk] No pending hunk at cursor.", vim.log.levels.INFO)
+    _notify("[copilot-hunk] No pending hunk at cursor.", vim.log.levels.INFO, session.opts)
     return
   end
 
@@ -176,7 +188,7 @@ function M.reject_at_cursor(bufnr)
   local line = vim.api.nvim_win_get_cursor(0)[1]
   local hunk = hunk_mod.hunk_at_line(line, session.hunks)
   if not hunk then
-    vim.notify("[copilot-hunk] No pending hunk at cursor.", vim.log.levels.INFO)
+    _notify("[copilot-hunk] No pending hunk at cursor.", vim.log.levels.INFO, session.opts)
     return
   end
 
@@ -280,7 +292,7 @@ function M.goto_next(bufnr)
   if hunk then
     vim.api.nvim_win_set_cursor(0, { hunk.start_after, 0 })
   else
-    vim.notify("[copilot-hunk] No pending hunks.", vim.log.levels.INFO)
+    _notify("[copilot-hunk] No pending hunks.", vim.log.levels.INFO, session.opts)
   end
 end
 
@@ -318,7 +330,7 @@ function M.goto_prev(bufnr)
   if hunk then
     vim.api.nvim_win_set_cursor(0, { hunk.start_after, 0 })
   else
-    vim.notify("[copilot-hunk] No pending hunks.", vim.log.levels.INFO)
+    _notify("[copilot-hunk] No pending hunks.", vim.log.levels.INFO, session.opts)
   end
 end
 
@@ -328,6 +340,15 @@ end
 function M._check_complete(bufnr, session)
   for _, h in ipairs(session.hunks) do
     if h.status == "pending" then return end
+  end
+
+  -- Mark the file as reviewed so it won't re-trigger in a new session
+  local mark_path = (session.opts and session.opts._session_file_path)
+                 or vim.api.nvim_buf_get_name(bufnr)
+  if mark_path and mark_path ~= "" then
+    pcall(function()
+      require("copilot_hunk")._mark_reviewed(mark_path)
+    end)
   end
 
   -- FS operations for new/deleted file sessions (before stop clears session state)
@@ -352,7 +373,7 @@ function M._check_complete(bufnr, session)
         end)
         M.stop(bufnr)
       end
-      vim.notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO)
+      _notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO, session.opts)
       return
     elseif kind == "deleted_file" then
       if not is_empty then
@@ -371,14 +392,14 @@ function M._check_complete(bufnr, session)
         if vim.api.nvim_buf_is_valid(bufnr) then
           vim.api.nvim_buf_delete(bufnr, { force = true })
         end
-        vim.notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO)
+        _notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO, session.opts)
         return
       end
     end
   end
 
   M.stop(bufnr)
-  vim.notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO)
+  _notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO, session.opts)
 end
 
 --- @private
