@@ -152,4 +152,74 @@ describe("cross-file navigation", function()
       assert.equal(0, #session._session_order)
     end)
   end)
+
+  -- ── cross-file jump after accept/reject last hunk (#34) ────────────────
+
+  describe("accept/reject last hunk cross-file jump", function()
+    it("accept last hunk in file1 jumps to file2", function()
+      local buf1 = make_buf({ "a", "b" }, "/tmp/ch_test_accept_jump1.txt")
+      local buf2 = make_buf({ "x", "y" }, "/tmp/ch_test_accept_jump2.txt")
+
+      session.start(buf1, { "a_old", "b" }, init._opts)
+      session.start(buf2, { "x_old", "y" }, init._opts)
+
+      -- Set cursor onto buf1's first hunk
+      vim.api.nvim_set_current_buf(buf1)
+      local s1 = session.get(buf1)
+      vim.api.nvim_win_set_cursor(0, { s1.hunks[1].start_after, 0 })
+
+      -- Accept the only hunk in buf1
+      session.accept_at_cursor(buf1)
+
+      -- buf1 session should be stopped
+      assert.is_nil(session.get(buf1))
+      -- buf2 session should still be active
+      assert.is_not_nil(session.get(buf2))
+      -- Current buffer should now be buf2 (cross-file jump)
+      assert.equal(buf2, vim.api.nvim_get_current_buf())
+    end)
+
+    it("reject last hunk in file1 jumps to file2", function()
+      local buf1 = make_buf({ "a", "b" }, "/tmp/ch_test_reject_jump1.txt")
+      local buf2 = make_buf({ "x", "y" }, "/tmp/ch_test_reject_jump2.txt")
+
+      session.start(buf1, { "a_old", "b" }, init._opts)
+      session.start(buf2, { "x_old", "y" }, init._opts)
+
+      -- Set cursor onto buf1's first hunk
+      vim.api.nvim_set_current_buf(buf1)
+      local s1 = session.get(buf1)
+      vim.api.nvim_win_set_cursor(0, { s1.hunks[1].start_after, 0 })
+
+      -- Reject the only hunk in buf1
+      session.reject_at_cursor(buf1)
+
+      -- buf1 session should be stopped
+      assert.is_nil(session.get(buf1))
+      -- buf2 session should still be active
+      assert.is_not_nil(session.get(buf2))
+      -- Current buffer should now be buf2 (cross-file jump)
+      assert.equal(buf2, vim.api.nvim_get_current_buf())
+    end)
+
+    it("no cross-file jump when cross_file_navigation is false", function()
+      local opts_no_cross = vim.tbl_deep_extend("force", init._opts, { cross_file_navigation = false })
+      local buf1 = make_buf({ "a", "b" }, "/tmp/ch_test_no_jump1.txt")
+      local buf2 = make_buf({ "x", "y" }, "/tmp/ch_test_no_jump2.txt")
+
+      session.start(buf1, { "a_old", "b" }, opts_no_cross)
+      session.start(buf2, { "x_old", "y" }, opts_no_cross)
+
+      vim.api.nvim_set_current_buf(buf1)
+      local s1 = session.get(buf1)
+      vim.api.nvim_win_set_cursor(0, { s1.hunks[1].start_after, 0 })
+
+      session.accept_at_cursor(buf1)
+
+      -- buf1 session should be stopped
+      assert.is_nil(session.get(buf1))
+      -- Current buffer stays on buf1 (no cross-file jump)
+      assert.equal(buf1, vim.api.nvim_get_current_buf())
+    end)
+  end)
 end)

@@ -162,6 +162,11 @@ function M.accept_at_cursor(bufnr)
     return
   end
 
+  -- Save cross-file nav target BEFORE _check_complete may stop this session.
+  local cross = session.opts and session.opts.cross_file_navigation
+  if cross == nil then cross = true end
+  local next_bufnr_for_nav = cross and M._next_session_bufnr(bufnr) or nil
+
   hunk_mod.accept(hunk)
   local off, tot = global_counts(bufnr)
   ui.render(bufnr, session.hunks, session.opts, off, tot)
@@ -174,8 +179,20 @@ function M.accept_at_cursor(bufnr)
     for _, h in ipairs(upd_s.hunks) do if h.status == "pending" then pend = pend + 1 end end
     decoration.update(bufnr, pend, upd_s.opts)
   end
+
   if M.get(bufnr) then
+    -- Session still active: navigate within current file.
     M.goto_next(bufnr)
+  elseif next_bufnr_for_nav and next_bufnr_for_nav ~= bufnr then
+    -- Session ended (last hunk resolved): jump to first hunk of next file.
+    local actual = M._open_buffer(next_bufnr_for_nav)
+    local ns = M.get(actual)
+    if ns then
+      local first = hunk_mod.next_hunk(0, ns.hunks)
+      if first then
+        vim.api.nvim_win_set_cursor(0, { first.start_after, 0 })
+      end
+    end
   end
 end
 
@@ -192,6 +209,11 @@ function M.reject_at_cursor(bufnr)
     return
   end
 
+  -- Save cross-file nav target BEFORE _check_complete may stop this session.
+  local cross = session.opts and session.opts.cross_file_navigation
+  if cross == nil then cross = true end
+  local next_bufnr_for_nav = cross and M._next_session_bufnr(bufnr) or nil
+
   hunk_mod.reject(hunk, bufnr, session.hunks)
   local off, tot = global_counts(bufnr)
   ui.render(bufnr, session.hunks, session.opts, off, tot)
@@ -204,8 +226,20 @@ function M.reject_at_cursor(bufnr)
     for _, h in ipairs(upd_s2.hunks) do if h.status == "pending" then pend = pend + 1 end end
     decoration.update(bufnr, pend, upd_s2.opts)
   end
+
   if M.get(bufnr) then
+    -- Session still active: navigate within current file.
     M.goto_next(bufnr)
+  elseif next_bufnr_for_nav and next_bufnr_for_nav ~= bufnr then
+    -- Session ended (last hunk resolved): jump to first hunk of next file.
+    local actual = M._open_buffer(next_bufnr_for_nav)
+    local ns = M.get(actual)
+    if ns then
+      local first = hunk_mod.next_hunk(0, ns.hunks)
+      if first then
+        vim.api.nvim_win_set_cursor(0, { first.start_after, 0 })
+      end
+    end
   end
 end
 
