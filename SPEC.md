@@ -42,12 +42,16 @@ FileChangedShell  ──→  if now() - last_nvim_write[buf] < 2000ms → skip (
                          else → snap_store[buf] = current lines
 ```
 
-### 2つの検出パス
+### 3つの検出パス
 
 | シナリオ | Neovim autoread | イベント系列 |
 |---|---|---|
 | Neovim 起動中に AI が編集 | 任意 | `FileChangedShell` → `FileChangedShellPost` |
 | ユーザー不在中に AI が編集 | true | `FocusGained` → (autoread reload) → `BufReadPost` |
+| Neovim フォーカス中・非アクティブバッファ変更 | 任意 | `BufEnter` → checktime → `FileChangedShell` → `FileChangedShellPost` |
+
+- **FocusGained**: 全ロード済み通常バッファのスナップショットを取得後、`checktime` を実行
+- **BufEnter**: スナップショット + `checktime` + 2 秒クリーンアップタイマー（未変更スナップの破棄）
 
 ## キーマップ (セッション中のみ有効)
 
@@ -109,6 +113,7 @@ lua/copilot_hunk/
                     auto-snapshot の autocmd 設定 (_setup_auto_snapshot)
   session.lua    ← per-buffer セッション管理
                     _sessions{}, _session_order[], start/stop, accept/reject, goto_next/prev
+  decoration.lua ← UI デコレーション (diagnostic API, buffer variable, User event, WinBar)
   diff.lua       ← vim.diff() ラッパー → Hunk[] パーサー
   hunk.lua       ← hunk モデル、accept/reject、offset 再計算、wrap ナビゲーション
   ui.lua         ← extmark による inline 描画 (highlight, virt_lines, virt_text)
@@ -127,6 +132,12 @@ require('copilot_hunk').setup({
 
   -- キーマップを自動設定 (default: true)
   keymaps = true,
+
+  -- デコレーション設定
+  decorations = {
+    winbar = false,  -- WinBar 表示 (default: false)
+    icon   = "🤖",  -- WinBar / statusline のアイコン
+  },
 
   -- ハイライトカラーの上書き (省略可)
   highlights = {

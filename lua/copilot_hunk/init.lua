@@ -26,6 +26,10 @@ M._opts = {
   signs   = false,
   keymaps = true,
   enable_auto_snapshot = true,
+  decorations = {
+    winbar = false,   -- opt-in WinBar (may conflict with other winbar plugins)
+    icon   = "🤖",   -- icon shown in WinBar / statusline
+  },
 }
 
 --- Configure the plugin.  Call once in your init.lua / lazy spec.
@@ -38,6 +42,10 @@ M._opts = {
 ---   keymaps           boolean  install default keymaps (default true)
 function M.setup(user_opts)
   M._opts = vim.tbl_deep_extend("force", M._opts, user_opts or {})
+
+  -- Initialize decoration subsystem (diagnostic API, WinBar, etc.)
+  local decoration = require("copilot_hunk.decoration")
+  decoration.setup()
 
   local ui = require("copilot_hunk.ui")
   ui.define_highlights(M._opts.highlights)
@@ -192,6 +200,10 @@ function M._setup_auto_snapshot()
   local snap_store = {}      -- bufnr → string[] (pre-change snapshot)
   local last_nvim_write = {} -- bufnr → timestamp ms (from BufWritePre)
 
+  -- Expose for testing (read-only use from specs).
+  M._snap_store       = snap_store
+  M._last_nvim_write  = last_nvim_write
+
   local aug = vim.api.nvim_create_augroup("CopilotHunkAutoSnap", { clear = true })
 
   -- Track every time Neovim itself writes a buffer to disk.
@@ -208,11 +220,47 @@ function M._setup_auto_snapshot()
   vim.api.nvim_create_autocmd("FocusGained", {
     group = aug,
     callback = function()
-      local bufnr = vim.api.nvim_get_current_buf()
+      -- Snapshot ALL loaded normal buffers so multi-file AI edits are detected.
+      for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_loaded(bufnr)
+           and vim.bo[bufnr].buftype == ""
+           and not M.has_session(bufnr)
+           and not snap_store[bufnr] then
+          snap_store[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+        end
+      end
+      -- Run checktime to trigger FileChangedShell for changed files.
+      vim.cmd("checktime")
+    end,
+  })
+
+  -- BufEnter: take snapshot + run checktime for the entered buffer.
+  -- This handles AI edits to inactive buffers while Neovim remains focused.
+  -- FileChangedShell for a non-current buffer fires only when that buffer is entered.
+  vim.api.nvim_create_autocmd("BufEnter", {
+    group = aug,
+    callback = function(args)
+      local bufnr = args.buf
       if M.has_session(bufnr) then return end
       if vim.bo[bufnr].buftype ~= "" then return end
       if not vim.api.nvim_buf_is_loaded(bufnr) then return end
+      if snap_store[bufnr] then return end  -- snapshot already in progress
+
       snap_store[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+      -- Defer checktime so BufEnter fully completes first.
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(bufnr) then
+          vim.cmd("checktime " .. bufnr)
+        end
+      end)
+
+      -- Clean up stale snapshot if FileChangedShell did not fire within 2s.
+      vim.defer_fn(function()
+        if snap_store[bufnr] and not M.has_session(bufnr) then
+          snap_store[bufnr] = nil
+        end
+      end, 2000)
     end,
   })
 
@@ -252,6 +300,13 @@ function M._setup_auto_snapshot()
       end, 50)
     end,
   })
+end
+
+--- Statusline / tabline component.
+--- Returns "🤖 N" when the current buffer has N pending AI hunks, else "".
+--- Usage (lualine): { require('copilot_hunk').statusline }
+function M.statusline()
+  return require("copilot_hunk.decoration").statusline_component()
 end
 
 return M
