@@ -76,7 +76,7 @@ function M.render(bufnr, hunks, opts, global_offset, global_total)
   local show_signs = opts and opts.signs ~= false
 
   for _, hunk in ipairs(hunks) do
-    if hunk.status ~= "rejected" then
+    if hunk.status == "pending" then
       M._render_hunk(bufnr, ns, hunk, show_signs)
     end
   end
@@ -193,17 +193,21 @@ function M._render_char_diff(bufnr, ns, hunk)
     for _, idx in ipairs(indices) do
       local start_a, count_a = idx[3], idx[4]
       if count_a > 0 then
+        -- Get actual buffer line at this row
+        local actual_line = (vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false) or {})[1] or ""
+        local actual_len = #actual_line
+
         local col_start = start_a - 1  -- 0-indexed
         local col_end   = col_start + count_a
-        -- Clamp to actual line length
-        local line_len = #after
-        col_end = math.min(col_end, line_len)
+        -- Clamp both start and end to actual buffer line length
+        col_end   = math.min(col_end, actual_len)
+        col_start = math.min(col_start, actual_len)
         if col_start < col_end then
           vim.api.nvim_buf_set_extmark(bufnr, ns, row, col_start, {
-            end_row   = row,
-            end_col   = col_end,
-            hl_group  = "CopilotHunkChangeChar",
-            priority  = 120,
+            end_row  = row,
+            end_col  = col_end,
+            hl_group = "CopilotHunkChangeChar",
+            priority = 120,
           })
         end
       end
