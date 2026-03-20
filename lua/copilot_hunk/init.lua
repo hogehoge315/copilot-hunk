@@ -311,9 +311,9 @@ end
 --- Detect AI-edited files not yet loaded as buffers by checking git diff.
 --- For each unloaded modified file, loads it as a hidden buffer and starts a session.
 --- Only runs when git is available. Skips non-git projects silently.
---- @param snap_store table   per-bufnr snapshot store (unused here but kept for API consistency)
+--- @param _snap_store table   per-bufnr snapshot store (unused here but kept for API consistency)
 --- @param last_nvim_write table  per-bufnr timestamp of last BufWritePre
-function M._detect_ai_edited_via_git(snap_store, last_nvim_write)
+function M._detect_ai_edited_via_git(_snap_store, last_nvim_write)
   if vim.fn.executable("git") == 0 then return end
   local cwd = vim.fn.getcwd()
   local files = vim.fn.systemlist(
