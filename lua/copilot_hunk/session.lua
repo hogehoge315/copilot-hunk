@@ -2,10 +2,41 @@
 --- Manages per-buffer review sessions.
 --- Each session stores base_lines, the computed hunks, and plugin options.
 
-local diff_mod = require("copilot_hunk.diff")
-local hunk_mod = require("copilot_hunk.hunk")
-local ui       = require("copilot_hunk.ui")
-local keymap   = require("copilot_hunk.keymap")
+local diff_mod   = require("copilot_hunk.diff")
+local hunk_mod   = require("copilot_hunk.hunk")
+local ui         = require("copilot_hunk.ui")
+local keymap     = require("copilot_hunk.keymap")
+local decoration = require("copilot_hunk.decoration")
+
+--- @private
+--- Calculate the global hunk offset and total across all active sessions.
+--- Counts non-rejected hunks (pending + accepted) to keep counter stable
+--- until a hunk is explicitly rejected.
+--- @param bufnr number
+--- @return number offset  non-rejected hunks in sessions before bufnr in _session_order
+--- @return number total   total non-rejected hunks across ALL active sessions
+local function global_counts(bufnr)
+  local M_ref = require("copilot_hunk.session")
+  local offset = 0
+  local total  = 0
+  local found  = false
+  for _, b in ipairs(M_ref._session_order) do
+    local s = M_ref._sessions[b]
+    if not s then goto continue end
+    local cnt = 0
+    for _, h in ipairs(s.hunks) do
+      if h.status ~= "rejected" then cnt = cnt + 1 end
+    end
+    if b == bufnr then
+      found = true
+    elseif not found then
+      offset = offset + cnt
+    end
+    total = total + cnt
+    ::continue::
+  end
+  return offset, total
+end
 
 local M = {}
 
@@ -52,8 +83,11 @@ function M.start(bufnr, base_lines, opts)
   }
 
   table.insert(M._session_order, bufnr)
+  decoration.mark(bufnr, #hunks, opts)
 
-  ui.render(bufnr, hunks, opts)
+  local off, tot = global_counts(bufnr)
+  ui.render(bufnr, hunks, opts, off, tot)
+  M._rerender_all()
   keymap.attach(bufnr)
 
   -- Auto-close session when the buffer is deleted.
@@ -83,6 +117,8 @@ function M.stop(bufnr, opts)
   end
 
   ui.clear(bufnr)
+  local sess_opts = session and session.opts or {}
+  decoration.unmark(bufnr, sess_opts)
   keymap.detach(bufnr)
   M._sessions[bufnr] = nil
 
@@ -115,9 +151,17 @@ function M.accept_at_cursor(bufnr)
   end
 
   hunk_mod.accept(hunk)
-  ui.render(bufnr, session.hunks, session.opts)
+  local off, tot = global_counts(bufnr)
+  ui.render(bufnr, session.hunks, session.opts, off, tot)
 
   M._check_complete(bufnr, session)
+  M._rerender_all()
+  local upd_s = M.get(bufnr)
+  if upd_s then
+    local pend = 0
+    for _, h in ipairs(upd_s.hunks) do if h.status == "pending" then pend = pend + 1 end end
+    decoration.update(bufnr, pend, upd_s.opts)
+  end
   if M.get(bufnr) then
     M.goto_next(bufnr)
   end
@@ -137,9 +181,17 @@ function M.reject_at_cursor(bufnr)
   end
 
   hunk_mod.reject(hunk, bufnr, session.hunks)
-  ui.render(bufnr, session.hunks, session.opts)
+  local off, tot = global_counts(bufnr)
+  ui.render(bufnr, session.hunks, session.opts, off, tot)
 
   M._check_complete(bufnr, session)
+  M._rerender_all()
+  local upd_s2 = M.get(bufnr)
+  if upd_s2 then
+    local pend = 0
+    for _, h in ipairs(upd_s2.hunks) do if h.status == "pending" then pend = pend + 1 end end
+    decoration.update(bufnr, pend, upd_s2.opts)
+  end
   if M.get(bufnr) then
     M.goto_next(bufnr)
   end
@@ -157,8 +209,16 @@ function M.accept_all(bufnr)
     end
   end
 
-  ui.render(bufnr, session.hunks, session.opts)
+  local off1, tot1 = global_counts(bufnr)
+  ui.render(bufnr, session.hunks, session.opts, off1, tot1)
   M._check_complete(bufnr, session)
+  M._rerender_all()
+  local upd_s3 = M.get(bufnr)
+  if upd_s3 then
+    local pend = 0
+    for _, h in ipairs(upd_s3.hunks) do if h.status == "pending" then pend = pend + 1 end end
+    decoration.update(bufnr, pend, upd_s3.opts)
+  end
 end
 
 --- Reject all pending hunks.
@@ -174,8 +234,16 @@ function M.reject_all(bufnr)
     end
   end
 
-  ui.render(bufnr, session.hunks, session.opts)
+  local off2, tot2 = global_counts(bufnr)
+  ui.render(bufnr, session.hunks, session.opts, off2, tot2)
   M._check_complete(bufnr, session)
+  M._rerender_all()
+  local upd_s4 = M.get(bufnr)
+  if upd_s4 then
+    local pend = 0
+    for _, h in ipairs(upd_s4.hunks) do if h.status == "pending" then pend = pend + 1 end end
+    decoration.update(bufnr, pend, upd_s4.opts)
+  end
 end
 
 --- Jump to the next pending hunk, crossing file boundaries with wrap-around.
@@ -259,6 +327,19 @@ function M._check_complete(bufnr, session)
 
   M.stop(bufnr)
   vim.notify("[copilot-hunk] All hunks reviewed. Session ended.", vim.log.levels.INFO)
+end
+
+--- @private
+--- Re-render all active sessions with globally-correct hunk counters.
+--- Call this after any accept/reject to keep counters in sync across files.
+function M._rerender_all()
+  for _, b in ipairs(M._session_order) do
+    local s = M._sessions[b]
+    if s then
+      local off, tot = global_counts(b)
+      ui.render(b, s.hunks, s.opts, off, tot)
+    end
+  end
 end
 
 --- @private

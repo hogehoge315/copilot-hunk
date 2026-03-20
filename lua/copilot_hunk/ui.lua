@@ -68,7 +68,9 @@ end
 --- @param bufnr number
 --- @param hunks Hunk[]
 --- @param opts table  plugin options
-function M.render(bufnr, hunks, opts)
+--- @param global_offset? number  non-rejected hunk count in sessions before this one
+--- @param global_total?  number  total non-rejected hunks across all active sessions
+function M.render(bufnr, hunks, opts, global_offset, global_total)
   M.clear(bufnr)
   local ns = M.ns()
   local show_signs = opts and opts.signs ~= false
@@ -79,7 +81,7 @@ function M.render(bufnr, hunks, opts)
     end
   end
 
-  M._render_hunk_counters(bufnr, ns, hunks)
+  M._render_hunk_counters(bufnr, ns, hunks, global_offset, global_total)
 end
 
 --- @private
@@ -210,25 +212,37 @@ function M._render_char_diff(bufnr, ns, hunk)
 end
 
 --- Render [n/N] hunk counter as EOL virtual text on each hunk's first line.
+--- Uses global_offset/global_total when provided (cross-file counter).
+--- Falls back to local-only counting if globals are not supplied.
+--- @param global_offset? number
+--- @param global_total?  number
 --- @private
-function M._render_hunk_counters(bufnr, ns, hunks)
+function M._render_hunk_counters(bufnr, ns, hunks, global_offset, global_total)
   local line_count = vim.api.nvim_buf_line_count(bufnr)
-  local pending = {}
+
+  -- Count non-rejected hunks for fallback local total.
+  local fallback_total = 0
+  for _, h in ipairs(hunks) do
+    if h.status ~= "rejected" then fallback_total = fallback_total + 1 end
+  end
+
+  local total  = global_total  or fallback_total
+  local offset = global_offset or 0
+  local local_idx = 0
+
   for _, h in ipairs(hunks) do
     if h.status ~= "rejected" then
-      pending[#pending + 1] = h
-    end
-  end
-  local total = #pending
-  for idx, h in ipairs(pending) do
-    if h.status == "pending" then
-      local row = math.max(h.start_after - 1, 0)  -- 0-indexed
-      if row < line_count then
-        vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
-          virt_text = { { string.format("[%d/%d]", idx, total), "CopilotHunkCount" } },
-          virt_text_pos = "eol",
-          priority = 90,
-        })
+      local_idx = local_idx + 1
+      if h.status == "pending" then
+        local global_idx = offset + local_idx
+        local row = math.max(h.start_after - 1, 0)  -- 0-indexed
+        if row < line_count then
+          vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
+            virt_text = { { string.format("[%d/%d]", global_idx, total), "CopilotHunkCount" } },
+            virt_text_pos = "eol",
+            priority = 90,
+          })
+        end
       end
     end
   end
