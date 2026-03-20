@@ -42,16 +42,35 @@ FileChangedShell  ──→  if now() - last_nvim_write[buf] < 2000ms → skip (
                          else → snap_store[buf] = current lines
 ```
 
-### 3つの検出パス
+### 4つの検出パス
 
 | シナリオ | Neovim autoread | イベント系列 |
 |---|---|---|
 | Neovim 起動中に AI が編集 | 任意 | `FileChangedShell` → `FileChangedShellPost` |
 | ユーザー不在中に AI が編集 | true | `FocusGained` → (autoread reload) → `BufReadPost` |
 | Neovim フォーカス中・非アクティブバッファ変更 | 任意 | `BufEnter` → checktime → `FileChangedShell` → `FileChangedShellPost` |
+| 未ロードバッファ・新規/削除ファイル | 任意 | `FocusGained` → `_detect_ai_edited_via_git()` |
 
 - **FocusGained**: 全ロード済み通常バッファのスナップショットを取得後、`checktime` を実行
 - **BufEnter**: スナップショット + `checktime` + 2 秒クリーンアップタイマー（未変更スナップの破棄）
+
+### `_detect_ai_edited_via_git()`
+
+`FocusGained` 時に以下の git コマンドを実行し、Neovim で未ロードのファイルを検出する:
+
+- `git diff --name-only HEAD` → 変更済みファイル
+- `git ls-files --others --exclude-standard` → 新規ファイル
+- `git ls-files --deleted` → 削除ファイル
+
+検出されたファイルは非表示バッファとして読み込まれセッションが開始される。
+
+### BufEnter ハンドラの 3 ケース
+
+| ケース | 条件 | 処理 |
+|---|---|---|
+| Case 1 | セッション既存 (`_sessions[bufnr]` あり) | `_rerender_all()` で extmark 再描画 |
+| Case 2 | 同ファイル・異なる bufnr (Telescope/FZF 経由) | `_transfer_session()` でセッション転送 |
+| Case 3 | セッションなし | 通常のスナップショット + checktime |
 
 ## キーマップ (セッション中のみ有効)
 
@@ -88,6 +107,24 @@ FileChangedShell  ──→  if now() - last_nvim_write[buf] < 2000ms → skip (
 - これにより、1ファイルしか開いていなくても `[1/2]` のようにグローバルカウンターが正しく表示される
 - `n`/`N` で未ロードバッファへ移動すると、自動的に `buflisted = true` に設定される
 - git が利用できないプロジェクトでは静かにスキップされる
+
+## 新規ファイル / 削除ファイル対応
+
+AI が新規作成・削除したファイルにも対応する。
+
+### 新規ファイル (`_session_kind = "new_file"`)
+
+- AI が新規作成したファイルを `git ls-files --others --exclude-standard` で検出
+- 全行が「追加」hunk として表示される (`diff({}, lines)`)
+- **accept**: `:write!` でファイルを保存
+- **reject**: ファイルを削除 (`vim.fn.delete()`)
+
+### 削除ファイル (`_session_kind = "deleted_file"`)
+
+- AI が削除したファイルを `git ls-files --deleted` で検出
+- 全行が「削除」hunk として表示される (`diff(lines, {})`)
+- **accept**: バッファを削除 (ファイルは削除されたまま)
+- **reject**: `writefile()` でファイルを復元
 
 ## ビジュアル仕様
 
@@ -148,6 +185,10 @@ require('copilot_hunk').setup({
   -- false にすると現在バッファ内のみでラップする
   cross_file_navigation = true,
 
+  -- 通知レベル (default: vim.log.levels.WARN = INFOを抑制)
+  -- vim.log.levels.INFO にすると全通知を表示
+  notify_level = vim.log.levels.WARN,
+
   -- デコレーション設定
   decorations = {
     winbar = false,  -- WinBar 表示 (default: false)
@@ -162,6 +203,47 @@ require('copilot_hunk').setup({
   },
 })
 ```
+
+## レビュー済み永続化
+
+ファイル内の全 hunk が accept/reject で解決されると、レビュー済みとして永続保存される。
+
+- accept 完了時に `.git/copilot-hunk-reviewed` にファイルパス + SHA-256 ハッシュを書き込む
+- 次回 Neovim 起動時にハッシュ照合し、一致すればスキップ (セッションを開始しない)
+- AI が再編集するとファイル内容が変わりハッシュが不一致になるため、自動的に再検出される
+
+## デコレーション
+
+pending hunk のあるバッファには以下のデコレーションが適用される。
+
+### diagnostic API
+
+- `vim.diagnostic.set()` で namespace `copilot_hunk_diag` に HINT エントリを設定
+- `vim.diagnostic.config({ float = false, signs = false, underline = false, virtual_text = false }, _ns)` で表示を完全抑制 (プログラム的な読み取り専用)
+- nvim-tree / neo-tree はこの diagnostic を自動的に読み取りアイコンを表示する
+
+### バッファ変数
+
+- `vim.b[bufnr].copilot_hunk_active` — セッションがアクティブかどうか (`true` / `false`)
+- `vim.b[bufnr].copilot_hunk_count` — pending hunk の数
+
+### autocmd イベント
+
+- `User CopilotHunkSessionChanged` — データ: `{ bufnr, active, pending }`
+
+### statusline_component()
+
+```lua
+require("copilot_hunk.decoration").statusline_component()
+-- → "🤖 3" (pending hunk がある場合)
+-- → ""    (セッションなしの場合)
+```
+
+lualine 等のステータスラインプラグインで使用する。
+
+### WinBar
+
+`decorations.winbar = true` にすると、セッション中のバッファの WinBar にロボットアイコンが表示される。
 
 ## Non-goals (意図的に実装しないもの)
 
